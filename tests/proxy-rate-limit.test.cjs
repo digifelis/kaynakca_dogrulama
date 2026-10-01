@@ -11,6 +11,10 @@ test('proxy preserves HTML 429, shares cooldown across queries and resumes after
   const context = { require: id => require(id.startsWith('./') ? path.join(__dirname, '..', id) : id), module: { exports: {} }, __dirname: path.join(__dirname, '..'), process,
     URL, AbortSignal, Date: Clock, setTimeout: (fn, ms) => setTimeout(() => { now += ms; fn(); }, 0),
     fetch: async () => ++calls === 1 ? new Response('<html>Rate limited</html>', { status: 429, headers: { 'retry-after': '120' } }) : new Response('{"results":[]}') };
+  // The proxy module runs in the same fake clock and fetch as the server that serves it.
+  const proxy = { ...context, module: { exports: {} } };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../lib/provider-proxy.cjs'), 'utf8'), proxy);
+  context.require = id => id === './lib/provider-proxy.cjs' ? proxy.module.exports : require(id.startsWith('./') ? path.join(__dirname, '..', id) : id);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../server.cjs'), 'utf8'), context);
   const server = context.module.exports.createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

@@ -16,6 +16,8 @@ const copyButton = document.querySelector('#copy-button');
 const copyStatus = document.querySelector('#copy-status');
 const stopButton = document.querySelector('#stop-button');
 let runController = null;
+// With the local server the run happens there (queue services or a worker thread); the browser only polls.
+let serverMode = false;
 let displayedResults = [];
 let activeFilter = 'all';
 const filterLabels = { all: 'tümü', verified: 'doğrulandı', review: 'incelenmeli', failed: 'bulunamadı', error: 'servis hatası', pending: 'ek kaynak bekliyor' };
@@ -37,8 +39,11 @@ const serverReady = typeof window === 'undefined' ? Promise.resolve() : (async (
     const config = await response.json();
     if (!response.ok || !config.proxy) throw Error('no proxy');
     ReferenceEngine.configure({ proxyUrl: '/api/proxy', googleBooksConfigured: config.googleBooksConfigured });
+    serverMode = true;
     renderProviderCatalog(config);
-    document.querySelector('#provider-access-note').textContent = 'Akademik dizinler ve web sayfaları yerel sunucudan sorgulanır. Akademik kota beklemeleri otomatik sürer; web kotasında kayıt ertelenir, sonraki deneme zamanı gösterilir.';
+    document.querySelector('#provider-access-note').textContent = config.mode === 'queue'
+      ? `Kaynaklar kuyruk üzerinden doğrulama servisine gönderilir (çalışan doğrulama servisi: ${config.services?.verify ?? 0}). Akademik kota beklemeleri otomatik sürer; web kotasında kayıt ertelenir, sonraki deneme zamanı gösterilir.`
+      : 'Akademik dizinler ve web sayfaları yerel sunucudan sorgulanır. Akademik kota beklemeleri otomatik sürer; web kotasında kayıt ertelenir, sonraki deneme zamanı gösterilir.';
   } catch {
     document.querySelector('#provider-access-note').textContent = 'Temel tarayıcı erişimi kullanılıyor. Bazı ek dizinler tarayıcıdan erişimi engelleyebilir; tam erişim için uygulamayı node server.cjs ile başlatın.';
   }
@@ -142,6 +147,53 @@ function renderOutput(results) {
   outputSection.classList.remove('hidden');
 }
 
+function waitDuration(retryAt) {
+  const seconds = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
+  return seconds >= 60 ? `${Math.floor(seconds / 60)} dk ${seconds % 60} sn` : `${seconds} sn`;
+}
+// Shows a server result the way the in-browser run did: queued fallbacks and quota waits stay "pending".
+function presentResult(result, batch, index) {
+  const shown = { ...result, lastQuery: batch.lastQuery?.[index] };
+  if (batch.running && shown.fallbackNeeded && !shown.pendingRetryAt) Object.assign(shown, { status: 'pending', statusText: 'Ek kaynak sırası', reason: 'Crossref taraması tamamlandıktan sonra ek kaynaklarda kontrol edilecek.' });
+  else if (shown.pendingRetryAt && shown.status !== 'verified') Object.assign(shown, { status: 'pending', statusText: 'Kota bekleniyor', reason: 'Ek kaynak kotası için yeniden deneme bekliyor. Diğer kayıtların kontrolü devam ediyor; bu kayıt otomatik yeniden sorgulanacak.' });
+  return shown;
+}
+async function verifyOnServer(references, results) {
+  const headers = { 'Content-Type': 'application/json', 'X-Word-Request': '1' }, signal = runController.signal;
+  const started = await fetch('/api/verify-batches', { method: 'POST', headers, body: JSON.stringify({ references }), signal });
+  let batch = await started.json();
+  if (!started.ok) throw Error(batch.error || 'Doğrulama başlatılamadı.');
+  const id = batch.id;
+  signal.addEventListener('abort', () => fetch(`/api/verify-batches/${id}/stop`, { method: 'POST', headers }).catch(() => {}), { once: true });
+  references.forEach((raw, index) => { results[index] = { raw, corrected: raw, status: 'pending', statusText: 'Sırada', score: 0, provider: 'Doğrulama kuyruğu', changes: [], reason: 'Doğrulama servisine gönderildi; sırası bekleniyor.' }; });
+  let version = -1;
+  while (true) {
+    if (batch.version !== version) {
+      version = batch.version;
+      batch.results.forEach((result, index) => { if (result) results[index] = presentResult(result, batch, index); });
+      const primary = batch.phase === 'primary';
+      progressValue.textContent = `${batch.primaryCompleted} / ${batch.total}`;
+      progressBar.style.width = `${(batch.primaryCompleted / batch.total) * 100}%`;
+      progressLabel.textContent = batch.wait?.retryAt > Date.now()
+        ? `${batch.wait.index === undefined ? 'Ek kaynaklar' : 'Kayıt ' + (batch.wait.index + 1)}: ${batch.wait.provider} kotası için ${waitDuration(batch.wait.retryAt)} bekleniyor; otomatik devam edilecek`
+        : primary ? `İlk tarama (akademik / web): kayıt ${Math.min(batch.total, batch.primaryCompleted + 1)} inceleniyor` : 'Ek kaynaklar inceleniyor';
+      renderSummary(results);
+      renderResults(results);
+      renderOutput(results);
+    }
+    if (!batch.running) {
+      if (batch.state === 'stopped') throw Object.assign(Error('İşlem durduruldu'), { name: 'AbortError' });
+      if (batch.state === 'error') throw Error(batch.error || 'Doğrulama tamamlanamadı.');
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 800));
+    if (signal.aborted) throw Object.assign(Error('İşlem durduruldu'), { name: 'AbortError' });
+    const response = await fetch(`/api/verify-batches/${id}`, { signal });
+    batch = await response.json();
+    if (!response.ok) throw Error(batch.error || 'Doğrulama durumu alınamadı.');
+  }
+}
+
 async function runVerification() {
   if (verifyButton.disabled) return;
   const references = splitReferences(input.value);
@@ -166,6 +218,8 @@ async function runVerification() {
   renderSummary(results);
   try {
     await serverReady;
+    if (serverMode) await verifyOnServer(references, results);
+    else {
     ReferenceEngine.configure({ signal: runController.signal, onRequest: event => {
       queryHistory.set(currentIndex, event);
       if (results[currentIndex]?.status === 'pending') {
@@ -226,6 +280,9 @@ async function runVerification() {
         unresolved.push(unresolved.shift());
       }
     }
+    }
+    progressValue.textContent = `${references.length} / ${references.length}`;
+    progressBar.style.width = '100%';
     progressLabel.textContent = 'Kontrol tamamlandı';
   } catch (error) {
     const stopped = error.name === 'AbortError';

@@ -1,0 +1,81 @@
+# Kaynakça Masası as containers: queue + verification service (x2) + LLM service + web app.
+#   node scripts/generate-keys.cjs           # once: RS256 key pairs into ./keys
+#   docker compose up --build
+# API keys: services/verify/.env and services/llm/.env (see the .env.example files next to them).
+# Each container mounts only the public keys and its own private key (as a secret).
+# On another server, run any service alone and point QUEUE_URL at the queue's address.
+name: kaynakca-masasi
+
+x-service: &service
+  build: { context: ., target: service }
+  image: kaynakca-masasi/service
+  restart: unless-stopped
+  volumes:
+    - ./keys/public:/keys/public:ro
+
+services:
+  queue:
+    <<: *service
+    command: ["node", "services/queue/server.cjs"]
+    environment:
+      QUEUE_HOST: 0.0.0.0
+      QUEUE_PORT: "4180"
+      QUEUE_DATA_DIR: /data
+      JWT_KEYS_DIR: /keys
+    volumes:
+      - ./keys/public:/keys/public:ro
+      - queue-data:/data
+    # Published on localhost only; open it to other hosts (behind TLS) when services run elsewhere.
+    ports: ["127.0.0.1:4180:4180"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4180/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  verify:
+    <<: *service
+    command: ["node", "services/verify/index.cjs"]
+    environment:
+      QUEUE_URL: http://queue:4180
+      JWT_KEYS_DIR: /keys
+      JWT_PRIVATE_KEY_FILE: /run/secrets/verify_key
+    env_file: [{ path: services/verify/.env, required: false }]
+    secrets: [verify_key]
+    depends_on: { queue: { condition: service_healthy } }
+    deploy: { replicas: 2 }
+
+  llm:
+    <<: *service
+    command: ["node", "services/llm/index.cjs"]
+    environment:
+      QUEUE_URL: http://queue:4180
+      JWT_KEYS_DIR: /keys
+      JWT_PRIVATE_KEY_FILE: /run/secrets/llm_key
+    env_file: [{ path: services/llm/.env, required: false }]
+    secrets: [llm_key]
+    depends_on: { queue: { condition: service_healthy } }
+
+  web:
+    build: { context: ., target: web }
+    image: kaynakca-masasi/web
+    restart: unless-stopped
+    environment:
+      QUEUE_URL: http://queue:4180
+      JWT_KEYS_DIR: /keys
+      JWT_PRIVATE_KEY_FILE: /run/secrets/web_key
+    volumes:
+      - ./keys/public:/keys/public:ro
+      - web-data:/data
+    secrets: [web_key]
+    ports: ["127.0.0.1:4173:4173"]
+    depends_on: { queue: { condition: service_healthy } }
+
+secrets:
+  web_key: { file: ./keys/private/web.private.pem }
+  verify_key: { file: ./keys/private/verify.private.pem }
+  llm_key: { file: ./keys/private/llm.private.pem }
+
+volumes:
+  queue-data:
+  web-data:

@@ -4,7 +4,7 @@ const root=path.join(__dirname,'..');
 test('Word worker releases ready results before the quota delay and retries the same remaining record',async()=>{
  const messages=[],calls=[];let resume;
  const engine={configure(){},getPendingRetryAt:r=>r.pendingRetryAt,waitForRetry:()=>new Promise(r=>resume=r),verifyReference:async(raw,opts)=>{calls.push(raw);if(raw==='good')return {status:'verified'};if(opts?.primaryOnly)return {fallbackNeeded:true};return calls.filter(c=>c==='pending').length<3?{status:'error',pendingRetryAt:1,fallbackNeeded:true}:{status:'verified'};}};
- vm.runInNewContext(fs.readFileSync(path.join(root,'scripts/word-verify-worker.cjs'),'utf8'),{require:id=>id==='node:worker_threads'?{parentPort:{postMessage:m=>messages.push(m)},workerData:{references:['good','pending']}}:id.includes('reference-engine')?engine:{}});
+ vm.runInNewContext(fs.readFileSync(path.join(root,'scripts/word-verify-worker.cjs'),'utf8'),{require:id=>id==='node:worker_threads'?{parentPort:{postMessage:m=>messages.push(m)},workerData:{references:['good','pending']}}:id.includes('reference-engine')?engine:id.includes('lib/verification')?require(path.join(root,'lib/verification.cjs')):{}});
  for(let i=0;i<20&&!resume;i++)await new Promise(r=>setImmediate(r));
  assert.equal(messages.find(m=>m.type==='ready').pending,1);
  assert.equal(messages.find(m=>m.type==='ready').completed,1);
@@ -17,7 +17,7 @@ test('deferred Word quota unlocks content controls without losing successful res
  let worker;
  class FakeWorker extends EventEmitter{constructor(){super();worker=this;}terminate(){}}
  const mod={exports:{}};
- vm.runInNewContext(fs.readFileSync(path.join(root,'word-service.cjs'),'utf8'),{module:mod,__dirname:root,process,Buffer,AbortController,URL,require:id=>id==='node:worker_threads'?{Worker:FakeWorker}:id==='./word-store.cjs'?{save(){}}:require(id.startsWith('.')?path.join(root,id):id),setTimeout,clearTimeout});
+ vm.runInNewContext(fs.readFileSync(path.join(root,'word-service.cjs'),'utf8'),{module:mod,__dirname:root,process,Buffer,AbortController,URL,require:id=>id==='./lib/verification.cjs'?{start:()=>new FakeWorker()}:id==='./word-store.cjs'?{save(){}}:require(id.startsWith('.')?path.join(root,id):id),setTimeout,clearTimeout});
  const s={id:'test',data:Buffer.from(''),references:[{id:'r0',raw:'Author. (2021). Test.',year:'2021'}],citations:[],paragraphs:[],range:{start:0,end:0},content:{untouched:{verdict:'supported'}},applied:new Map(),appliedGroups:new Map(),manualConfirmed:new Set(),manualMappings:new Map(),contextOverrides:new Map(),job:{running:false}};
  mod.exports.startVerification(s,4173,false);
  const retryAt=Date.now()+321000;

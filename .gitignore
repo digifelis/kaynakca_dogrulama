@@ -7,3 +7,8 @@ data/
 # Kullanıcı makaleleri (kişisel belge, sürüm kontrolüne alınmaz)
 /*.docx
 __pycache__/
+
+# JWT anahtarları (özel anahtarlar asla sürüm kontrolüne alınmaz)
+keys/
+# Servislerin kendi API anahtarları
+services/*/.env

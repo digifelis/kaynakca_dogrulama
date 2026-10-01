@@ -1,0 +1,14 @@
+# Secrets and user data never go into an image.
+.env
+**/.env
+keys/
+data/
+*.docx
+*.pdf
+tests/
+.git/
+node_modules/
+graphify-out/
+__pycache__/
+*.md
+!README.md

@@ -1,5 +1,5 @@
 const {spawn}=require('node:child_process');
-const {Worker}=require('node:worker_threads');
+const Verification=require('./lib/verification.cjs'),Backend=require('./lib/backend.cjs');
 const {randomUUID,createHash}=require('node:crypto');
 const path=require('node:path');
 const fs=require('node:fs');
@@ -112,7 +112,7 @@ function addDebugEvent(s,event){
   for(const key of ['model','detail','citation','record','verdict','retryAfter','resetTokens','resetRequests','remainingTokens','remainingRequests'])if(event[key])clean[key]=String(event[key]).slice(0,key==='record'?500:240);
   if(event.url)clean.url=safeEventUrl(event.url);s.debugEvents.push(clean);if(s.debugEvents.length>200)s.debugEvents.splice(0,s.debugEvents.length-200);return clean;
 }
-function llmConfigured(){return !!process.env.GROQ_API_KEY||Content.openRouterEnabled();}
+function llmConfigured(){return Content.llmAvailable();}
 function snapshot(s){return {id:s.id,name:s.name,format:s.format||'docx',mode:s.mode||'word',checks:s.checks,checksStarted:s.checksStarted,autoPaused:!!s.autoPaused,revision:s.revision||0,createdAt:s.createdAt,updatedAt:s.updatedAt,pdfFiles:(s.pdfFiles||[]).map(({data,...v})=>v),range:s.range,paragraphs:effectiveParagraphs(s).map(p=>({id:p.id,index:p.index,text:p.text,part:p.part,protected:p.protected,editable:editable(s,p)})),warnings:s.warnings,references:(s.effectiveReferences||s.references).map(r=>({...r,pdf:s.texts[r.id]?{preview:s.texts[r.id].preview,needsConfirmation:s.texts[r.id].needsConfirmation,versionNotice:Content.preprintNotice(s.texts[r.id]),access:s.texts[r.id].access}:null})),citations:s.citations||[],findings:s.mode==='content'&&s.checks?.citations===false?[]:s.findings||[],job:s.job,referenceJob:s.referenceJob,debugEvents:s.debugEvents||[],applied:[...s.appliedGroups].map(([id,patches])=>({id,before:patches.map(p=>p.original).join(' '),after:patches.map(p=>p.replacement).join(' ')})),content:s.content,groqConfigured:llmConfigured(),openrouterConfigured:Content.openRouterEnabled()};}
 function startVerification(s,port,after,scope){
   if(s.job.running)throw Error('Önce devam eden işlemi durdurun.');
@@ -121,7 +121,8 @@ function startVerification(s,port,after,scope){
   s.referenceJob={running:true,pending:0,completed:0,total:s.references.length};
   s.job={running:true,kind:'references',message:'Kaynaklar doğrulanıyor',completed:0,total:s.references.length};
   addDebugEvent(s,{scope:'reference',kind:'start',provider:'Kaynak doğrulama',detail:`${s.references.length} kayıt sıraya alındı`});
-  const worker=new Worker(path.join(__dirname,'scripts/word-verify-worker.cjs'),{workerData:{proxy:`http://127.0.0.1:${port}/api/proxy`,references:s.references.map(r=>r.raw),initialResults:s.references.map(r=>r.verification),googleBooksConfigured:!!process.env.GOOGLE_BOOKS_API_KEY}});s.worker=worker;
+  // Runs in a worker thread, or as queue jobs answered by the verification service when a queue is configured.
+  const worker=Verification.start({proxy:`http://127.0.0.1:${port}/api/proxy`,references:s.references.map(r=>r.raw),initialResults:s.references.map(r=>r.verification),googleBooksConfigured:!!process.env.GOOGLE_BOOKS_API_KEY},{queue:Backend.queue()});s.worker=worker;
   const content=()=>{if(!after&&!s.autoContentScope)return;if(s.job.running){s.followupContent=true;return;}startContent(s,s.autoContentScope||scope).catch(e=>{s.job={running:false,message:e.message};persist(s);});};
   worker.on('message',m=>{
     if(s.worker!==worker)return;
@@ -166,7 +167,7 @@ function scopeNeedsVerification(s,scope={}){
 }
 async function startContent(s,scope={}){
   if(s.job.running)throw Error('Önce devam eden işlemi durdurun.');
-  if(!llmConfigured())throw Error('Etkin bir GROQ_API_KEY veya OPENROUTER_API_KEY yapılandırılmamış.');
+  if(!llmConfigured())throw Error(Content.llmMissing());
   s.autoContentScope=scope;const controller=new AbortController();s.controller=controller;const signal=controller.signal;
   s.job={running:true,kind:'content',message:'Yayın metinleri ediniliyor',completed:0,total:scopedCitations(s,scope).length};
   addDebugEvent(s,{scope:'groq',kind:'start',provider:'Groq',detail:`${s.job.total} atıf sıraya alındı`});persist(s);
@@ -296,14 +297,14 @@ async function handle(req,res,url,json){
       if(s.job.running||s.referenceJob?.running)throw Error('Önce devam eden denetimi durdurun.');
       const checks={references:input.checks?.references===true,citations:input.checks?.citations===true,llm:input.checks?.llm===true};
       if(!Object.values(checks).some(Boolean))throw Error('En az bir denetim seçin.');
-      if(checks.llm&&!llmConfigured())throw Error('LLM API anahtarı yapılandırılmamış.');
+      if(checks.llm&&!llmConfigured())throw Error(Content.llmMissing());
       s.checks=checks;s.checksStarted=true;rebuild(s);
       if(checks.references)startVerification(s,req.socket.localPort,checks.llm);
       else if(checks.llm)await startContent(s,{});
       else s.job={running:false,kind:'citations',message:'Metin içi atıf kontrolü tamamlandı',completed:s.citations.length,total:s.citations.length};
     }
     else if(action==='verify'){if(!s.references.length)throw Error('Önce kaynakça bölümünü seçin.');startVerification(s,req.socket.localPort);}
-    else if(action==='content'||action==='check'){if(!s.references.length)throw Error('Önce kaynakça bölümünü seçin.');if(action==='check'){if(!llmConfigured())throw Error('Etkin bir GROQ_API_KEY veya OPENROUTER_API_KEY yapılandırılmamış.');if(s.checks?.references!==false&&!s.worker&&scopeNeedsVerification(s,input))startVerification(s,req.socket.localPort,true,input);else await startContent(s,input);}else await startContent(s,input);}
+    else if(action==='content'||action==='check'){if(!s.references.length)throw Error('Önce kaynakça bölümünü seçin.');if(action==='check'){if(!llmConfigured())throw Error(Content.llmMissing());if(s.checks?.references!==false&&!s.worker&&scopeNeedsVerification(s,input))startVerification(s,req.socket.localPort,true,input);else await startContent(s,input);}else await startContent(s,input);}
     else if(action==='apply'||action==='undo'||action==='applymany'){
       const bibliography=action!=='applymany'&&String(input.id).startsWith('bib-');
       // PDFs accept bibliography suggestions as report-only entries; in-text fixes stay Word-only.

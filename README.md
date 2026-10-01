@@ -10,7 +10,57 @@ Node.js 20 veya üzeri gerekir. Kurulum veya derleme adımı yoktur. Proje klas�
 node server.cjs
 ```
 
-Sonra `http://localhost:4173/` adresini açın.
+Sonra `http://localhost:4173/` adresini açın. `QUEUE_URL` tanımlı değilse uygulama bu **yerel modda** her işi kendi içinde yapar.
+
+## Mikroservis mimarisi
+
+Kaynak doğrulama ve LLM işleri ayrı servislerde, kuyruk üzerinden çalışabilir:
+
+```text
+tarayıcı ──> web (server.cjs) ──iş──> kuyruk (services/queue) <──boştaysa iş çeker── doğrulama servisi ×N (services/verify)
+                 ^                       │  ^                  <──boştaysa iş çeker── LLM servisi ×N (services/llm)
+                 └──── sonuç (yoklama) ──┘  └── web kaynağı için LLM işi ── doğrulama servisi
+```
+
+- **Kuyruk** (`services/queue/server.cjs`, varsayılan port 4180): bağımlılıksız Node servisi. İki kuyruk vardır: `verify` (kaynak doğrulama) ve `llm` (atıf–kaynak değerlendirmesi, arama terimi üretimi, web kaynağı alan tamamlama). Boştaki servis işi long-poll ile çeker; iş her zaman boşta bekleyen servise gider. Servis düşerse iş, kiralama süresi dolunca başka servise verilir. Bekleyen işler `QUEUE_DATA_DIR` altındaki günlükte saklanır, kuyruk yeniden başlasa da kaybolmaz. Durdur, kuyruktaki işi iptal eder ve çalışan servisi durdurur.
+- **Doğrulama servisi** (`services/verify`): kaynak motorunu çalıştırır. Dizin anahtarlarını (OpenAlex, Semantic Scholar, CORE, Google Books…) **yalnızca kendi** `services/verify/.env` dosyasından okur. Her süreç aynı anda bir kayıt doğrular; paralellik için birden çok kopya çalıştırın.
+- **LLM servisi** (`services/llm`): Groq/OpenRouter anahtarlarını **yalnızca kendi** `services/llm/.env` dosyasından okur. Kota bekleme ve model yedekleme bu serviste yapılır.
+- **API anahtarları kuyruğa hiç girmez.** Ana proje bu modda anahtar tutmaz; tarayıcıya açık `/api/proxy` kapatılır.
+
+### Güvenlik (JWT)
+
+Her servisin kendi RS256 anahtar çifti vardır (`web`, `verify`, `llm`):
+
+- Her kuyruk çağrısı, servisin kendi özel anahtarıyla imzaladığı 5 dakikalık bir JWT taşır. Kuyruk yalnızca açık anahtarları bilir; özel anahtar hiçbir servisten çıkmaz.
+- Roller kuyrukta denetlenir:
+  - `web` iki kuyruğa da iş gönderir.
+  - `verify`, `verify` kuyruğundan iş alır; web sayfası kaynaklarının eksik alanları için `llm` kuyruğuna iş gönderir.
+  - `llm`, `llm` kuyruğundan iş alır.
+- Her iş ayrıca yayıncı tarafından imzalanır: içeriğin SHA-256 özeti JWT içinde gider. Servis, imzası veya içeriği tutmayan işi reddeder. Kuyruk ele geçirilse bile sahte veya değiştirilmiş iş çalıştırılamaz.
+- Servisler başka sunuculardaysa kuyruğu TLS (ör. ters vekil) arkasında açın. JWT kimliği doğrular, ama trafiği şifrelemez.
+
+### Tek makinede çalıştırma
+
+```powershell
+node scripts/generate-keys.cjs        # bir kez: keys/public ve keys/private
+copy services\verify\.env.example services\verify\.env   # anahtarları doldurun
+copy services\llm\.env.example services\llm\.env
+node scripts/start-services.cjs       # kuyruk + 2 doğrulama + 1 LLM + web
+```
+
+Başlatıcı, bir servis düşerse onu yeniden başlatır. Ayarlar ortam değişkenleriyle verilir: `PORT`, `QUEUE_PORT`, `VERIFY_INSTANCES`, `LLM_INSTANCES`.
+
+### Docker / başka sunucular
+
+```powershell
+node scripts/generate-keys.cjs
+docker compose up --build
+```
+
+- `docker-compose.yml` kuyruğu, iki doğrulama servisini, bir LLM servisini ve web uygulamasını başlatır.
+- Her container yalnızca açık anahtarları ve **kendi** özel anahtarını (Docker secret) görür.
+- Servisler başka sunucuda container olarak çalıştırılabilir. Gerekenler: aynı imaj, `QUEUE_URL=http(s)://kuyruk-adresi:4180`, `keys/public` klasörü ve o servisin özel anahtarı (`JWT_PRIVATE_KEY_FILE`).
+- Linux'ta özel anahtar dosyalarının container kullanıcısı (uid 1000) tarafından okunabilmesi gerekir.
 
 ## Akış
 
