@@ -15,6 +15,8 @@
   --on-accent: #ffffff;
   --ok: #17784c;
   --ok-soft: #e3f3ea;
+  --ok-hover: #12613d;
+  --on-ok: #ffffff;
   --warn: #a85a08;
   --warn-soft: #fcf0de;
   --bad: #be3a31;
@@ -47,6 +49,8 @@
     --on-accent: #0c1220;
     --ok: #5fcf97;
     --ok-soft: #15301f;
+    --ok-hover: #7fdcac;
+    --on-ok: #0c1a12;
     --warn: #f0b05a;
     --warn-soft: #3a2a12;
     --bad: #ff8f86;
@@ -109,6 +113,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button:disabled, .primary-button:disabled, .copy-button:disabled { opacity: .45; cursor: not-allowed; }
 .copy-button:disabled:hover, .primary-button:disabled:hover { background: var(--accent); }
 .copy-button.btn-secondary:disabled:hover { background: var(--surface); color: var(--ink); border-color: var(--line-strong); }
+.copy-button.btn-success, .copy-button.btn-success:disabled:hover { background: var(--ok); color: var(--on-ok); }
+.copy-button.btn-success:hover { background: var(--ok-hover); }
+.reference-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 20px; margin: 8px 0; }
+.reference-meta .provider-note { margin: 0; }
+.reference-meta .reference-score { flex: none; }
+.reference-meta .reference-reason { flex: 1 1 280px; }
 select { appearance: none; width: 100%; min-height: 40px; padding: 8px 36px 8px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-s); background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23586379' stroke-width='1.6'/%3E%3C/svg%3E") no-repeat right 12px center; color: var(--ink); font-size: 14px; }
 input[type="search"], input[type="text"] { min-height: 40px; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-s); background: var(--surface); color: var(--ink); font-size: 14px; }
 input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
