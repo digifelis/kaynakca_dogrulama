@@ -42,11 +42,14 @@ function italicHtml(html,text){
 // "Öneriyi kullan" sends the textarea text; it replaces the index suggestion for this one application.
 function customReference(s,id,text){
   const r=s.references.find(r=>r.id===id);if(!r)throw Error('Kaynak bulunamadı.');
-  const v=r.verification;if(!v?.matched&&!v?.suggested)throw Error('Bu kayıt için öneri yok; önce kaynakları doğrulayın.');
-  if(r.protected)throw Error('Bu kayıt korunan bir alanda; Word’de elle düzeltin.');
+  const v=r.verification||{};
   const value=text.replace(/\s+/g,' ').trim();if(!value||value.length>4000)throw Error('Künye metni boş olamaz ve en fazla 4000 karakter olabilir.');
-  s.suggestions.set('bib-'+id,refPatches(s,r,{suggested:value,suggestedHtml:italicHtml(v.suggestedHtml||v.correctedHtml,value)}));
+  // Protected Word fields and PDFs cannot be rewritten: the accepted entry is kept for the review and report only.
+  const reportOnly=!!r.protected||s.format==='pdf'||r.paragraphs.some(pid=>s.paragraphs.find(p=>p.id===pid)?.protected);
+  s.suggestions.set('bib-'+id,refPatches(s,r,{suggested:value,suggestedHtml:italicHtml(v.suggestedHtml||v.correctedHtml,value)}).map(p=>reportOnly?{...p,reportOnly:true}:p));
 }
+// Patches that are written into the DOCX; report-only acceptances never reach the file.
+function documentPatches(s){return [...s.applied.values()].filter(p=>!p.reportOnly);}
 function rebuild(s){
   if(s.mode==='content'&&s.checks&&!s.checks.citations&&!s.checks.llm){s.citations=[];s.findings=[];s.effectiveReferences=s.references;s.suggestions=new Map();return;}
 
@@ -226,7 +229,7 @@ async function saveParagraph(s,input){
 function applyGroup(s,id){
   const patches=s.suggestions.get(id);if(!patches)throw Error('Düzeltme önerisi bulunamadı.');
   for(const p of patches){
-    const source=s.paragraphs.find(v=>v.id===p.paragraph);if(source.protected||source.text.slice(p.start,p.end)!==p.original)throw Error('Düzeltme konumu geçersiz veya korunuyor.');
+    const source=s.paragraphs.find(v=>v.id===p.paragraph);if(source.protected&&!p.reportOnly||source.text.slice(p.start,p.end)!==p.original)throw Error('Düzeltme konumu geçersiz veya korunuyor.');
     if([...s.applied.values()].some(a=>a.paragraph===p.paragraph&&a.start<p.end&&p.start<a.end))throw Error('Örtüşen düzeltmeyi önce geri alın.');
   }
   const group=patches.map((p,i)=>({...p,_key:id+':'+i}));for(const p of group)s.applied.set(p._key,p);s.appliedGroups.set(id,group);
@@ -257,7 +260,7 @@ async function handle(req,res,url,json){
     if(req.method==='GET'&&action==='pdfdownload'){const pdf=(s.pdfFiles||[]).find(p=>p.id===url.searchParams.get('file'));if(!pdf)throw Error('PDF bulunamadı.');res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename=source.pdf'});res.end(Buffer.from(pdf.data,'base64'));return true;}
     if(req.method==='GET'&&action==='download'){
       if(s.format==='pdf')throw Error(PDF_READ_ONLY);
-      const out=await python({operation:'export',data:s.data.toString('base64'),patches:[...s.applied.values()]});
+      const out=await python({operation:'export',data:s.data.toString('base64'),patches:documentPatches(s)});
       res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','Content-Disposition':'attachment; filename="makale_duzeltilmis.docx"','Cache-Control':'no-store'});res.end(Buffer.from(out.data,'base64'));return true;
     }
     if(req.method!=='POST')return json(res,405,{error:'Desteklenmeyen işlem.'}),true;
@@ -302,17 +305,21 @@ async function handle(req,res,url,json){
     else if(action==='verify'){if(!s.references.length)throw Error('Önce kaynakça bölümünü seçin.');startVerification(s,req.socket.localPort);}
     else if(action==='content'||action==='check'){if(!s.references.length)throw Error('Önce kaynakça bölümünü seçin.');if(action==='check'){if(!llmConfigured())throw Error('Etkin bir GROQ_API_KEY veya OPENROUTER_API_KEY yapılandırılmamış.');if(s.checks?.references!==false&&!s.worker&&scopeNeedsVerification(s,input))startVerification(s,req.socket.localPort,true,input);else await startContent(s,input);}else await startContent(s,input);}
     else if(action==='apply'||action==='undo'||action==='applymany'){
-      if(s.format==='pdf')throw Error(PDF_READ_ONLY);
+      const bibliography=action!=='applymany'&&String(input.id).startsWith('bib-');
+      // PDFs accept bibliography suggestions as report-only entries; in-text fixes stay Word-only.
+      if(s.format==='pdf'&&!bibliography)throw Error(PDF_READ_ONLY);
       if(s.job.running)throw Error('Düzeltmeden önce denetimi durdurun.');
       const oldApplied=new Map(s.applied),oldGroups=new Map(s.appliedGroups);
       if(action==='undo')removeApplied(s,input.id);
       else if(action==='applymany'){
         if(!Array.isArray(input.ids)||!input.ids.length||input.ids.length>1000)throw Error('Düzeltme seçimi geçersiz.');
         try{for(const id of input.ids)applyGroup(s,id);}catch(e){s.applied=oldApplied;s.appliedGroups=oldGroups;throw e;}
-      }else{if(typeof input.text==='string'&&String(input.id).startsWith('bib-'))customReference(s,input.id.slice(4),input.text);applyGroup(s,input.id);}
+      }else{if(typeof input.text==='string'&&bibliography)customReference(s,input.id.slice(4),input.text);applyGroup(s,input.id);}
       // Verify the actual OOXML edit before accepting the patch.
-      try{await python({operation:'export',data:s.data.toString('base64'),patches:[...s.applied.values()]});}catch(e){s.applied=oldApplied;s.appliedGroups=oldGroups;throw e;}
-      s.content={};rebuild(s);
+      if(s.format!=='pdf')try{await python({operation:'export',data:s.data.toString('base64'),patches:documentPatches(s)});}catch(e){s.applied=oldApplied;s.appliedGroups=oldGroups;throw e;}
+      // A bibliography fix only invalidates content results of citations to that source.
+      if(bibliography){const ref=input.id.slice(4);for(const c of s.citations||[])if(c.reference===ref)delete s.content[c.id];}else s.content={};
+      rebuild(s);
     }
     else if(action==='match'||action==='context'){
       if(s.job.running)throw Error('Önce denetimi durdurun.');const c=s.citations.find(c=>c.id===input.citation);if(!c)throw Error('Atıf bulunamadı.');
@@ -325,7 +332,7 @@ async function handle(req,res,url,json){
           for(const target of targets){s.manualMappings.set(target.id,ref.id);s.contextOverrides.delete(target.id);delete s.content[target.id];}
           s.manualConfirmed.add(ref.id);rebuild(s);
           if(s.mode==='word'&&s.format!=='pdf')for(const target of targets)if(s.suggestions.has(target.id)){removeApplied(s,target.id);applyGroup(s,target.id);}
-          if(s.format!=='pdf')await python({operation:'export',data:s.data.toString('base64'),patches:[...s.applied.values()]});
+          if(s.format!=='pdf')await python({operation:'export',data:s.data.toString('base64'),patches:documentPatches(s)});
           rebuild(s);
         }catch(error){Object.assign(s,previous);rebuild(s);throw error;}
       }else {

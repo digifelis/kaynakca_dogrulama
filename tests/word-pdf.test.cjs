@@ -60,3 +60,34 @@ test('PDF upload is analysed read-only: no corrected file, no in-document fixes,
     await new Promise(r => server.close(r));
   }
 });
+
+test('PDF kaynakçasında Öneriyi kullan yalnız listede ve raporda geçerli olur, belgeye yazılmaz ve geri alınabilir', async () => {
+  const server = require('../server.cjs').createServer();
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const base = 'http://127.0.0.1:' + server.address().port, headers = { 'X-Word-Request': '1', 'Content-Type': 'application/json' };
+  const post = (route, data) => fetch(base + route, { method: 'POST', headers, body: JSON.stringify(data) });
+  let id;
+  try {
+    let s = await (await post('/api/word/upload', { name: 'makale.pdf', mode: 'word', data: manuscript().toString('base64') })).json(); id = s.id;
+    const session = S.sessions.get(id), ref = session.references[0];
+    ref.verification = { status: 'review', statusText: 'İncelenmeli' };
+    S.rebuild(session);
+    const text = 'Brown, A., & Green, B. (2019). Motivation and persistence in distance education: A longitudinal study. Journal of Online Learning, 10(2), 1–20.';
+    let response = await post('/api/word/' + id + '/apply', { id: 'bib-' + ref.id, text });
+    s = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(s));
+    const applied = s.references.find(r => r.id === ref.id);
+    assert.equal(applied.accepted, true);
+    assert.equal(applied.effectiveRaw, text);
+    assert.ok([...session.applied.values()].every(p => p.reportOnly));
+    response = await fetch(base + '/api/word/' + id + '/download');
+    assert.equal(response.status, 400, 'PDF yine indirilemez');
+    s = await (await post('/api/word/' + id + '/undo', { id: 'bib-' + ref.id })).json();
+    assert.equal(s.references.find(r => r.id === ref.id).accepted, false);
+    response = await post('/api/word/' + id + '/apply', { id: 'c0' });
+    assert.match((await response.json()).error, /PDF belgelerine düzeltme yazılamaz/);
+  } finally {
+    if (id && S.sessions.has(id)) { Store.remove(id); S.dispose(S.sessions.get(id)); }
+    await new Promise(r => server.close(r));
+  }
+});

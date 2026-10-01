@@ -64,14 +64,14 @@ function createWordWorkspace(prefix,mode) {
     return {different:true,score:Math.min(99,Math.round(200*overlap/Math.max(1,original.length+suggested.length-2)))};
   }
   // The suggested entry is an editable draft; "Öneriyi kullan" writes the textarea's text into the bibliography.
+  // It is offered for every unsettled record; without an index suggestion the draft starts from the record itself.
   function referenceSuggestion(r,v,comparison){
-    if(!v?.suggested)return '';
-    const applicable=!!(v.matched&&!r.protected&&state.format!=='pdf');
-    if(r.accepted)return `<div class="word-correction reference-suggestion"><p class="reference-suggestion-label">Kaynakçaya uygulanan künye</p><p class="matched-reference">${esc(r.effectiveRaw||v.suggested)}</p>${applicable?`<div class="word-card-actions">${button('undo','bib-'+r.id,'Kaynakça düzeltmesini geri al')}</div>`:''}</div>`;
-    if(!comparison.different)return '';
-    const draft=drafts.get('reference:'+r.id)??v.suggested,edited=draft!==v.suggested;
-    const note=applicable?'Dergi adı ve cilt italikleri, metinde aynen kaldıkları sürece korunur.':state.format==='pdf'?'PDF belgesine yazılamaz; metni kopyalayıp kaynak dosyanızda düzeltin.':r.protected?'Bu kayıt korunan bir alanda; Word’de elle düzeltin.':'Bu öneri kesin bir dizin eşleşmesine dayanmıyor; kaynağı inceleyip Word’de elle düzeltin.';
-    return `<div class="word-correction reference-suggestion"><label class="word-field"><span class="reference-suggestion-label">Önerilen künye${applicable?' (kullanmadan önce düzenleyebilirsiniz)':''}</span><textarea data-reference-draft="${esc(r.id)}" rows="4" ${applicable&&!busy&&!state.job.running?'':'readonly'}>${esc(draft)}</textarea></label><p class="provider-note">${note}</p>${applicable?`<div class="word-card-actions"><span>${button('usesuggestion',r.id,'Öneriyi kullan')}${edited?` <button class="text-button" type="button" data-action="resetsuggestion" data-id="${esc(r.id)}">Özgün öneriye dön</button>`:''}</span></div>`:''}</div>`;
+    const writable=!r.protected&&state.format!=='pdf';
+    if(r.accepted)return `<div class="word-correction reference-suggestion"><p class="reference-suggestion-label">${writable?'Kaynakçaya uygulanan künye':'Kabul edilen künye (listede ve raporda)'}</p><p class="matched-reference">${esc(r.effectiveRaw||v?.suggested||r.raw)}</p><div class="word-card-actions">${button('undo','bib-'+r.id,writable?'Kaynakça düzeltmesini geri al':'Kabulü geri al')}</div></div>`;
+    if(!v||v.status==='pending'||referenceStatus(r)==='verified'&&!comparison.different)return '';
+    const original=v.suggested||r.raw,draft=drafts.get('reference:'+r.id)??original,edited=draft!==original;
+    const note=state.format==='pdf'?'PDF belgesine yazılamaz; kullanılan künye listede ve denetim raporunda yer alır.':r.protected?'Bu kayıt korunan bir alanda; kullanılan künye listede ve raporda yer alır, Word’de elle düzeltin.':!v.suggested?'Dizinde öneri bulunamadı; künyeyi düzenleyip kullanabilirsiniz.':!v.matched?'Bu öneri kesin bir dizin eşleşmesine dayanmıyor; kullanmadan önce kaynağı inceleyin.':'Dergi adı ve cilt italikleri, metinde aynen kaldıkları sürece korunur.';
+    return `<div class="word-correction reference-suggestion"><label class="word-field"><span class="reference-suggestion-label">${v.suggested?'Önerilen künye':'Künye'} (kullanmadan önce düzenleyebilirsiniz)</span><textarea data-reference-draft="${esc(r.id)}" rows="4" ${!busy&&!state.job.running?'':'readonly'}>${esc(draft)}</textarea></label><p class="provider-note">${note}</p><div class="word-card-actions"><span>${button('usesuggestion',r.id,'Öneriyi kullan')}${edited?` <button class="text-button" type="button" data-action="resetsuggestion" data-id="${esc(r.id)}">Özgün öneriye dön</button>`:''}</span></div></div>`;
   }
   function referenceMarkup(v){
     // Only formatting produced by the bibliography formatter is allowed as markup.
@@ -79,8 +79,8 @@ function createWordWorkspace(prefix,mode) {
     if(!html)return esc(v.suggested);
     return html.split(/(<\/?em>)/g).map(part=>part==='<em>'||part==='</em>'?part:esc(part.replace(/&(?:amp|lt|gt|quot|#039);/g,x=>({'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&#039;':"'"}[x])))).join('');
   }
-  // Accepting the source identity settles a verified record even when its text still differs from the index record.
-  function referenceStatus(r){return r.verification?.status==='verified'&&!r.accepted&&!r.confirmed&&referenceComparison(r).different?'correction':r.verification?.status||'pending';}
+  // A record the user settled (suggestion used or identity accepted) counts as verified whatever the index said.
+  function referenceStatus(r){if(r.verification&&(r.accepted||r.confirmed))return 'verified';return r.verification?.status==='verified'&&referenceComparison(r).different?'correction':r.verification?.status||'pending';}
   let referenceFilter='all';
   async function encoded(file){if(file.size>20*1024*1024)throw Error('Dosya en fazla 20 MB olabilir.');const bytes=new Uint8Array(await file.arrayBuffer());let value='';for(let i=0;i<bytes.length;i+=32768)value+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(value);}
   function notify(message){const messageElement=$('message');if(messageElement)messageElement.textContent=message;}
@@ -199,8 +199,9 @@ function createWordWorkspace(prefix,mode) {
     const referenceCounts=Object.fromEntries(Object.keys(referenceFilters).map(key=>[key,key==='all'?state.references.length:state.references.filter(r=>referenceStatus(r)===key).length]));
     $('reference-summary').innerHTML=Object.entries(referenceFilters).map(([status,label])=>`<button type="button" class="summary-stat" data-reference-filter="${status}" aria-pressed="${referenceFilter===status}" aria-label="${referenceCounts[status]} ${label}: kaynakça kayıtlarını göster"><strong>${referenceCounts[status]}</strong><span>${label}</span></button>`).join('');
     $('references').innerHTML=state.references.map((r,i)=>{
-      const v=r.verification,comparison=referenceComparison(r);const status=referenceStatus(r)==='correction'?'Doğrulandı – düzeltme gerekli':v?.status==='verified'&&r.confirmed&&!r.accepted&&comparison.different?'Doğrulandı – kaynak kimliği sizin tarafınızdan kabul edildi':v?.statusText||'Henüz dizin doğrulaması yapılmadı';
-      const tone=v?.status==='verified'?'verified':v?.status==='failed'?'failed':v?.status==='error'?'error':v?.status==='pending'?'pending':'review';
+      const v=r.verification,comparison=referenceComparison(r);const settled=v&&v.status!=='verified'||comparison.different;
+      const status=referenceStatus(r)==='correction'?'Doğrulandı – düzeltme gerekli':v&&r.accepted&&settled?'Doğrulandı – öneri sizin tarafınızdan kullanıldı':v&&r.confirmed&&settled?'Doğrulandı – kaynak kimliği sizin tarafınızdan kabul edildi':v?.statusText||'Henüz dizin doğrulaması yapılmadı';
+      const tone=referenceStatus(r)==='verified'||v?.status==='verified'?'verified':v?.status==='failed'?'failed':v?.status==='error'?'error':v?.status==='pending'?'pending':'review';
       if((referenceFilter!=='all'&&referenceStatus(r)!==referenceFilter)||!matches(r.raw,v?.suggested,v?.reason))return '';
       return `<article id="${prefix}-reference-${esc(r.id)}" class="result-card ${tone}"><div class="result-top"><span class="result-number">${String(i+1).padStart(2,'0')}</span><span class="status-pill ${tone}">${esc(status)}</span></div><p class="raw-reference">${esc(r.raw)}</p>${comparison.score!==null?`<p class="provider-note" title="Özgün ve önerilen künye metinlerinin karakter çifti benzerliği; yayın kimliği güven puanı değildir.">Künye benzerliği: <strong>${comparison.score}/100</strong></p>`:''}${referenceSuggestion(r,v,comparison)}<p class="provider-note">${esc(v?.reason||'')}</p>
       ${typeof ReferenceWeb !== 'undefined' ? ReferenceWeb.details(v) : ''}
@@ -261,7 +262,7 @@ function createWordWorkspace(prefix,mode) {
       else if(name==='saveparagraph'){const text=drafts.get('paragraph:'+id)??state.paragraphs.find(p=>p.id===id)?.text;action('paragraph',{paragraph:id,text,revision:state.revision||0});}
       else if(name==='context'){const text=Array.from($('citations').querySelectorAll('[data-context]')).find(el=>el.dataset.context===id)?.value;action(name,{citation:id,text});}
       else if(name==='confirmcheck')action('confirm',{reference:id,citation:b.dataset.citationId});
-      else if(name==='usesuggestion'){const text=drafts.get('reference:'+id)??state.references.find(r=>r.id===id)?.verification?.suggested;action('apply',{id:'bib-'+id,text}).then(()=>{if(state?.references.find(r=>r.id===id)?.accepted)drafts.delete('reference:'+id);});}
+      else if(name==='usesuggestion'){const ref=state.references.find(r=>r.id===id),text=drafts.get('reference:'+id)??(ref?.verification?.suggested||ref?.raw);action('apply',{id:'bib-'+id,text}).then(()=>{if(state?.references.find(r=>r.id===id)?.accepted)drafts.delete('reference:'+id);});}
       else if(name==='resetsuggestion'){drafts.delete('reference:'+id);render();}
       else action(name,name==='confirm'?{reference:id}:{id});return;}
     const referenceFilterButton=event.target.closest('[data-reference-filter]');if(referenceFilterButton){referenceFilter=referenceFilterButton.dataset.referenceFilter;render();$('reference-summary').querySelector(`[data-reference-filter="${referenceFilter}"]`)?.focus({preventScroll:true});return;}
