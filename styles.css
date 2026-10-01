@@ -430,3 +430,12 @@ body[data-page="word"] .word-navigation { grid-template-columns: repeat(4, minma
 .word-workbench:has(> div[id$="-panel"]:not(.hidden)) .upload-copy > span { display: none; }
 .word-workbench:has(> div[id$="-panel"]:not(.hidden)) .upload-copy strong { font-size: 14px; font-weight: 600; color: var(--muted); }
 .word-workbench:has(> div[id$="-panel"]:not(.hidden)) .upload-button { padding: 6px 12px; background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); }
+
+/* Orphan-reference page progress: one prominent bar; a moving sheen until the first record returns. */
+.word-progress { padding: 14px 18px; }
+.word-progress .progress-stage { margin: 0; }
+.word-progress .progress-stage progress { height: 8px; }
+.word-progress .progress-stage p + p { margin-top: 4px; }
+.progress-stage progress.is-starting { background: linear-gradient(90deg, var(--sunken) 0%, var(--accent-soft) 50%, var(--sunken) 100%) 0 0 / 200% 100%; animation: progress-sheen 1.4s linear infinite; }
+.progress-stage progress.is-starting::-webkit-progress-bar { background: transparent; }
+@keyframes progress-sheen { to { background-position: -200% 0; } }

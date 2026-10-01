@@ -213,3 +213,18 @@ test('Word issue inspection opens a dialog without changing the list',async()=>{
  u.search('');
  assert.match(u.element('word-citations').innerHTML,/data-citation="c1"/);
 });
+test('Kaynakları doğrula Word sayfasında görünür bir ilerleme çubuğu gösterir', async () => {
+ const u = await ui();
+ assert.equal(u.element('word-progress').innerHTML, '', 'doğrulama başlamadan çubuk gösterilmez');
+ const session = u.sessions.get('session-1');
+ session.referenceJob = { running: true, completed: 1, seen: 1, total: 2, pending: 0 };
+ session.references[0].verification = { status: 'verified' };
+ session.job = { running: true, kind: 'references', message: 'Kaynak 1 sorgulandı; 1/2 kayda bakıldı' };
+ await u.events.get('word-verify:click')();
+ const html = u.element('word-progress').innerHTML;
+ assert.match(html, /<progress id="word-stage-references"[^>]*max="2" value="1"/);
+ assert.match(html, /1 \/ 2 sorgulandı · %50/);
+ assert.match(html, /1 kayıt kesinleşti/);
+ assert.match(html, /Kaynak 1 sorgulandı/);
+ assert.match(html, /is-active/);
+});

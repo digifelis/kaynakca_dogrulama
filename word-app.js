@@ -86,7 +86,7 @@ function createWordWorkspace(prefix,mode) {
     if(state?.checks&&(state.checksStarted!==true||!state.checks.llm)||busy||autoStarting||state?.job?.running||state?.referenceJob?.running||!pendingMatchedCitations().length)return;
     autoStarting=true;setTimeout(()=>action('check',{matchedOnly:true,pendingOnly:true}).finally(()=>{autoStarting=false;}),0);
   }
-  function schedule(){clearTimeout(poll);if(state?.job.running||state?.referenceJob?.running){const id=state.id;poll=setTimeout(async()=>{try{const next=await api('',{},'GET');if(state?.id!==id)return;if(next){state=next;render();}schedule();if(!state.job.running&&!state.referenceJob?.running){library();maybeAutoContent();}}catch(e){if(state?.id===id)notify(e.message);}},1500);}else maybeAutoContent();}
+  function schedule(){clearTimeout(poll);if(state?.job.running||state?.referenceJob?.running){const id=state.id;poll=setTimeout(async()=>{try{const next=await api('',{},'GET');if(state?.id!==id)return;if(next){state=next;render();}else renderProgress();schedule();if(!state.job.running&&!state.referenceJob?.running){library();maybeAutoContent();}}catch(e){if(state?.id===id)notify(e.message);}},1500);}else maybeAutoContent();}
   function button(action,id,label){return `<button class="copy-button" type="button" data-action="${action}" data-id="${esc(id)}" ${busy||state.job.running?'disabled':''}>${label}</button>`;}
   function location(c){return `<a class="word-location" href="#${prefix}-p-${esc(c.paragraph)}" data-show="${esc(c.paragraph)}">${esc(c.location||'Belgede göster')}</a>`;}
   function groupFindings(){return {
@@ -126,10 +126,24 @@ function createWordWorkspace(prefix,mode) {
   function empty(message){return `<div class="word-empty"><p>${esc(query?'Aramanızla eşleşen kayıt yok.':message)}</p>${query?'<button type="button" class="word-inline-button" data-clear-search>Aramayı temizle</button>':''}</div>`;}
   function remaining(at){return Math.max(0,Math.ceil((Number(at)-Date.now())/1000));}
   function renderProgress(){
-    if(!isContent||!$('progress'))return;
+    if(!$('progress')||!state)return;
     const job=state.job||{},refs=state.referenceJob||{};
     const sources=state.references||[],citations=state.citations||[];
     const refDone=sources.filter(r=>r.verification&&!r.verification.pendingRetryAt&&!r.verification.fallbackNeeded&&r.verification.status!=='pending').length;
+    if(!isContent){
+      // Orphan-reference page: a single bar for source verification, shown from the first click until the document closes.
+      const running=!!refs.running||!!(job.running&&job.kind==='references');
+      if(!running&&!state.referenceJob&&!sources.some(r=>r.verification)){$('progress').innerHTML='';return;}
+      // The bar tracks records already queried; settled and waiting records are reported separately below it.
+      // While running, count records queried in this run (server-side), so earlier results do not prefill the bar.
+      const total=sources.length,queried=running?Number(refs.seen)||0:sources.filter(r=>r.verification).length;
+      const completed=Math.min(total,Math.max(0,queried)),percent=total?Math.round(100*completed/total):0;
+      const waiting=sources.filter(r=>r.verification?.pendingRetryAt||r.verification?.fallbackNeeded).length;
+      const quota=running&&Number(refs.retryAt||job.retryAt)>Date.now()?`Kota bekleniyor; ${remaining(refs.retryAt||job.retryAt)} sn sonra otomatik devam edilecek.`:'';
+      const detail=quota||(running?(job.kind==='references'&&job.message)||'Yayın kayıtları sorgulanıyor':completed>=total?'Kaynak doğrulama tamamlandı.':'Doğrulama durdu; kalan kayıtlar için Kaynakları doğrula düğmesini kullanın.');
+      $('progress').innerHTML=`<div class="progress-stage ${running?'is-active':''}"><div class="progress-stage-heading"><label for="${prefix}-stage-references">Kaynak doğrulama</label><strong>${completed} / ${total} sorgulandı · %${percent}</strong></div><progress id="${prefix}-stage-references" class="${running&&!completed?'is-starting':''}" max="${Math.max(1,total)}" value="${completed}">%${percent}</progress><p>${esc(detail)}</p><p>${refDone} kayıt kesinleşti${waiting?`; ${waiting} kayıt ek kaynak veya kota için bekliyor`:''}.</p></div>`;
+      return;
+    }
     const llmActive=job.kind==='content';
     const assessed=citations.filter(c=>c.content).length;
     const total=llmActive?(job.total||0):citations.length;

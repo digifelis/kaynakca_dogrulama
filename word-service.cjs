@@ -110,7 +110,7 @@ function startVerification(s,port,after,scope){
       if(suffix&&m.result.matched?.year)for(const key of ['suggested','suggestedHtml','corrected','correctedHtml'])if(m.result[key])m.result[key]=m.result[key].replace(`(${m.result.matched.year})`,`(${m.result.matched.year}${suffix})`);
       r.verification=m.result;seen.add(m.index);if(m.result.status==='verified'&&old?.status!=='verified')newReady=true;
       if(JSON.stringify(old?.matched)!==JSON.stringify(m.result.matched)||old?.status!==m.result.status)for(const c of s.citations)if(c.reference===r.id)delete s.content[c.id];
-      s.referenceJob.completed=[...seen].filter(i=>!s.references[i].verification?.pendingRetryAt&&!s.references[i].verification?.fallbackNeeded).length;s.referenceJob.debug=referenceDebug(s);
+      s.referenceJob.seen=seen.size;s.referenceJob.completed=[...seen].filter(i=>!s.references[i].verification?.pendingRetryAt&&!s.references[i].verification?.fallbackNeeded).length;s.referenceJob.debug=referenceDebug(s);
       if(!released){s.job.completed=s.referenceJob.completed;s.job.message=`Kaynak ${m.index+1} sorgulandı; ${seen.size}/${s.references.length} kayda bakıldı`;delete s.job.retryAt;}
       rebuild(s);
       addDebugEvent(s,{scope:'reference',kind:'result',provider:m.result.provider||'Kaynak doğrulama',index:m.index+1,status:m.result.status,detail:m.result.statusText,record:r.raw});persist(s);
