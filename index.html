@@ -36,9 +36,9 @@
       <section id="word-workspace" class="workbench word-workbench" aria-labelledby="word-title">
         <h2 id="word-title" class="sr-only">Word makalesi ve atıf kontrolü</h2>
         <div class="upload-zone">
-          <input id="word-upload" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" aria-describedby="word-upload-hint">
+          <input id="word-upload" type="file" accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" aria-describedby="word-upload-hint">
           <span class="upload-icon" aria-hidden="true"></span>
-          <span class="upload-copy"><strong>Word makalenizi seçin ya da buraya bırakın</strong><span id="word-upload-hint">Yalnız .docx, en fazla 20 MB. Türkçe ve İngilizce APA yazar–yıl atıfları desteklenir.</span></span>
+          <span class="upload-copy"><strong>Makalenizi seçin ya da buraya bırakın</strong><span id="word-upload-hint">Word (.docx) veya PDF, en fazla 20 MB. Türkçe ve İngilizce APA yazar–yıl atıfları desteklenir; PDF salt okunur incelenir.</span></span>
           <span class="upload-button" aria-hidden="true">Dosya seç</span>
         </div>
         <p id="word-message" class="status-message" role="status" aria-live="polite"></p>
@@ -53,6 +53,7 @@
             <button id="word-report" class="text-button btn-quiet" type="button">Raporu indir</button>
             <button id="word-delete" class="text-button btn-danger" type="button">Belgeyi sil</button>
           </div>
+          <p id="word-format-note" class="format-note" hidden></p>
           <details id="word-boundaries" class="panel-details"><summary>Kaynakça bölümünü ve belgeyi incele</summary>
             <p>İlk ve son kaynakça paragrafını seçin; bölüm başlığını seçime dahil etmeyin. Bölümü değiştirmek seçilmiş düzeltmeleri sıfırlar.</p>
             <div class="word-range"><label>Başlangıç <select id="word-start"></select></label><label>Bitiş <select id="word-end"></select></label>
@@ -103,9 +104,9 @@
         <h2 id="content-title" class="sr-only">İçerik kontrolü için Word yükleyin</h2>
         <fieldset class="check-options"><legend>Yapılacak denetimler</legend><label><input id="content-check-references" type="checkbox" checked> Kaynakça doğrulama</label><label><input id="content-check-citations" type="checkbox" checked> Metin içi atıf kontrolü</label><label><input id="content-check-llm" type="checkbox" checked> LLM içerik kontrolü</label></fieldset>
         <div class="upload-zone">
-          <input id="content-upload" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" aria-describedby="content-upload-hint">
+          <input id="content-upload" type="file" accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" aria-describedby="content-upload-hint">
           <span class="upload-icon" aria-hidden="true"></span>
-          <span class="upload-copy"><strong>İçerik kontrolü için Word makalesi seçin ya da buraya bırakın</strong><span id="content-upload-hint">Yalnız .docx, en fazla 20 MB. Bu sayfanın dosyası Yetim kaynak kontrolünden bağımsızdır.</span></span>
+          <span class="upload-copy"><strong>İçerik kontrolü için makale seçin ya da buraya bırakın</strong><span id="content-upload-hint">Word (.docx) veya PDF, en fazla 20 MB. Bu sayfanın dosyası Yetim kaynak kontrolünden bağımsızdır.</span></span>
           <span class="upload-button" aria-hidden="true">Dosya seç</span>
         </div>
         <p id="content-message" class="status-message" role="status" aria-live="polite"></p>
@@ -121,6 +122,7 @@
             <button id="content-report" class="text-button btn-quiet" type="button">Raporu indir</button>
             <button id="content-delete" class="text-button btn-danger" type="button">Belgeyi sil</button>
           </div>
+          <p id="content-format-note" class="format-note" hidden></p>
           <details id="content-boundaries" class="panel-details"><summary>Kaynakça bölümünü ve belgeyi incele</summary>
             <p>İlk ve son kaynakça paragrafını seçin; bölüm başlığını seçime dahil etmeyin. Bölümü değiştirmek seçilmiş düzeltmeleri sıfırlar.</p>
             <div class="word-range"><label>Başlangıç <select id="content-start"></select></label><label>Bitiş <select id="content-end"></select></label>

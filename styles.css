@@ -439,3 +439,6 @@ body[data-page="word"] .word-navigation { grid-template-columns: repeat(4, minma
 .progress-stage progress.is-starting { background: linear-gradient(90deg, var(--sunken) 0%, var(--accent-soft) 50%, var(--sunken) 100%) 0 0 / 200% 100%; animation: progress-sheen 1.4s linear infinite; }
 .progress-stage progress.is-starting::-webkit-progress-bar { background: transparent; }
 @keyframes progress-sheen { to { background-position: -200% 0; } }
+
+/* Read-only notice for PDF manuscripts. */
+.format-note { margin: 10px 0 0; padding: 10px 14px; border-radius: var(--radius-s); background: var(--accent-soft); color: var(--ink); font-size: 14px; line-height: 1.55; }

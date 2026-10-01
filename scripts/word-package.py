@@ -147,6 +147,134 @@ def apply(z, patches):
     package(output.getvalue())
     return output.getvalue()
 
+REF_HEADING = re.compile(r'^(?:\d+[.)]?\s*)?(kaynakça|kaynaklar|references|bibliography|works cited)\s*[:.]?$', re.I)
+END_HEADING = re.compile(r'^(?:ekler|ek\s*\d*|appendix|appendices)\b', re.I)
+PAGE_NUMBER = re.compile(r'^(?:sayfa|page|s\.)?\s*\d{1,4}(?:\s*(?:/|of|-|–)\s*\d{1,4})?$', re.I)
+ENTRY_YEAR = re.compile(r'\(\s*(?:1[89]|20)\d{2}[a-z]?\s*[,)]|\(\s*(?:t\.\s*y\.|n\.\s*d\.)\s*\)', re.I)
+URLISH = re.compile(r'(?:https?://|doi\.org/|\b10\.\d{4,9}/)\S*$', re.I)
+
+def entry_start(line):
+    # "Yılmaz, A.", "van Dijk, T.", "World Health Organization. (2020)", "[12]", "12."
+    if re.match(r'^(?:\[\d{1,3}\]|\d{1,3}\.)\s+\S', line): return True
+    first = line[:1]
+    if not first or not (first.isupper() or line[:4].lower() in ('van ', 'von ', 'de l', 'van-')): return False
+    if re.match(r"^[^\W\d_][\w'’\-]*(?:\s+[^\W\d_][\w'’\-]*){0,3},\s*(?:[^\W\d_]{1,3}\.|[^\W\d_]+[,.])", line): return True
+    return bool(ENTRY_YEAR.search(line[:160]))
+
+def join_lines(text, line):
+    if not text: return line
+    if text.endswith('-') and len(text) > 1 and text[-2].isalpha() and line[:1].islower() and not URLISH.search(text):
+        return text[:-1] + line
+    if URLISH.search(text) and not text.endswith(('.', ',', ')')) and not line[:1].isupper():
+        return text + line
+    return text + ' ' + line
+
+def pdf_lines(reader):
+    """Visual lines in reading order as (page, indent, text); layout mode keeps word spacing and indentation."""
+    import unicodedata
+    pages = []
+    for page in reader.pages:
+        try: text = page.extract_text(extraction_mode='layout') or ''
+        except Exception: text = page.extract_text() or ''
+        text = unicodedata.normalize('NFKC', text).replace('\u00ad', '')
+        rows = []
+        for raw in text.split('\n'):
+            raw = raw.replace('\u00a0', ' ').replace('\t', ' ').rstrip()
+            stripped = raw.lstrip()
+            rows.append((len(raw) - len(stripped), re.sub(r' {2,}', ' ', stripped)))
+        while rows and not rows[-1][1]: rows.pop()
+        while rows and not rows[0][1]: rows.pop(0)
+        pages.append(rows)
+    return pages
+
+def pdf_paragraphs(data):
+    from pypdf import PdfReader
+    if len(data) > 20 * 1024 * 1024: raise ValueError('PDF en fazla 20 MB olabilir.')
+    reader = PdfReader(io.BytesIO(data))
+    if reader.is_encrypted:
+        try: ok = reader.decrypt('')
+        except Exception: ok = 0
+        if not ok: raise ValueError('Şifreli PDF desteklenmiyor; şifresiz bir kopya yükleyin.')
+    if len(reader.pages) > 500: raise ValueError('PDF en fazla 500 sayfa olabilir.')
+    pages = pdf_lines(reader)
+    total = sum(len(t) for p in pages for _, t in p)
+    if total > 2000000: raise ValueError('PDF metin sınırını aşıyor.')
+    if total < 200: raise ValueError('PDF’de okunabilir metin katmanı yok; taranmış belgeler için önce OCR uygulayın.')
+    # Running headers/footers repeat near the page edges on most pages; page numbers are dropped too.
+    key = lambda t: re.sub(r'\d+', '#', t.lower())
+    seen = {}
+    for p in pages:
+        body = [t for _, t in p if t]
+        for k in {key(t) for t in body[:2] + body[-2:]}: seen[k] = seen.get(k, 0) + 1
+    repeated = {k for k, c in seen.items() if len(pages) >= 2 and c >= max(2, len(pages) * 0.3)}
+    lines = []
+    for n, p in enumerate(pages):
+        body = [t for _, t in p if t]
+        edges = set(body[:2] + body[-2:])
+        for indent, t in p:
+            if t and t in edges and (key(t) in repeated or PAGE_NUMBER.match(t)): continue
+            lines.append((n + 1, indent, t))
+    widths = sorted(len(t) for _, _, t in lines if len(t) > 25)
+    full = widths[int(len(widths) * 0.75)] if widths else 80
+    indents = [i for _, i, t in lines if len(t) > 25]
+    base = max(set(indents), key=indents.count) if indents else 0
+    # Bibliography layout: with hanging indentation, continuation lines sit further right than entry starts.
+    ref_base, hanging, counts = {}, {}, {}
+    section = None
+    for idx, (_, indent, t) in enumerate(lines):
+        if REF_HEADING.match(t): section = idx; ref_base[section] = None; counts[section] = [0, 0]; continue
+        if section is None or not t: continue
+        if END_HEADING.match(t) and len(t) < 60: section = None; continue
+        if ref_base[section] is None: ref_base[section] = indent
+        counts[section][0] += 1
+        if indent > ref_base[section] + 2: counts[section][1] += 1
+    for key_, (all_, deeper) in counts.items(): hanging[key_] = all_ >= 4 and 0.25 <= deeper / all_ <= 0.85
+    out, current, page_of, in_refs, section, previous = [], '', 1, False, None, ''
+    def emit(style=''):
+        nonlocal current
+        text = current.strip()
+        if text:
+            if len(out) >= 25000: raise ValueError('Belge paragraf sınırını aşıyor.')
+            out.append({'id': 'pdf:' + str(len(out)), 'part': 'word/document.xml', 'index': len(out), 'text': text, 'protected': False,
+                        'paragraphLocked': True, 'group': 'word/document.xml', 'style': style, 'page': page_of})
+        current = ''
+    for idx, (page, indent, line) in enumerate(lines):
+        if not line:
+            # Vertical gaps end a block unless the text stops mid-sentence (page or column flow).
+            if in_refs: done = not hanging.get(section) and bool(ENTRY_YEAR.search(current))
+            else: done = bool(re.search(r'[.!?:"”)\]]$', previous)) or bool(previous and len(previous) < full * 0.72 and not re.search(r'[,;]$', previous))
+            if done: emit(); previous = ''
+            continue
+        short_prev = bool(previous) and len(previous) < full * 0.72
+        if REF_HEADING.match(line):
+            emit(); page_of = page; current = line; emit('Heading'); in_refs, section, previous = True, idx, ''; continue
+        if in_refs and END_HEADING.match(line) and len(line) < 60:
+            emit(); page_of = page; current = line; emit('Heading'); in_refs, previous = False, ''; continue
+        if in_refs:
+            start = ref_base.get(section)
+            if hanging.get(section): new_entry = current and start is not None and indent <= start + 1
+            else: new_entry = current and entry_start(line) and (short_prev or ENTRY_YEAR.search(current) or re.match(r'^(?:\[\d|\d+\.)', line)) and not (re.search(r'(?:,|&|\band|\bve)$', previous) and not URLISH.search(current.rstrip(',')))
+            if new_entry: emit()
+        elif current:
+            ends = re.search(r'[.!?:;"”’)\]]$', previous)
+            indented = indent > base + 2 and len(line) > 25
+            if short_prev and (ends or not re.search(r'[,;]$', previous)) or ends and indented: emit()
+        if not current: page_of = page
+        current = join_lines(current, line)
+        previous = line
+    emit()
+    for p in out: p['text'] = tidy(p['text'])
+    return out
+
+def tidy(text):
+    # Layout extraction inserts stray spaces from glyph gaps: "(202 5)", "(2026 b)", "( Fedus", "feed -forward".
+    text = re.sub(r'\b((?:19|20)\d) (\d)\b', r'\1\2', text)
+    text = re.sub(r'\b((?:19|20)\d{2}) ([a-z])\b(?=[)\s,;])', r'\1\2', text)
+    text = re.sub(r'\(\s+', '(', text)
+    text = re.sub(r'\s+\)', ')', text)
+    text = re.sub(r'(?<=[^\W\d_]) -(?=[^\W\d_])', '-', text)
+    return text
+
 def main():
     request = json.load(sys.stdin)
     data = base64.b64decode(request['data'], validate=True)
@@ -158,6 +286,9 @@ def main():
         pages = [{'location': 'Sayfa '+str(i+1), 'text': page.extract_text() or ''} for i, page in enumerate(reader.pages)]
         if sum(len(p['text']) for p in pages) > 2000000: raise ValueError('PDF metin sınırını aşıyor.')
         print(json.dumps({'passages': pages}, ensure_ascii=True)); return
+    if request['operation'] == 'inspect_pdf':
+        if not data.startswith(b'%PDF-'): raise ValueError('Geçerli PDF değil.')
+        print(json.dumps({'paragraphs': pdf_paragraphs(data), 'warnings': ['PDF metni sayfa düzeninden yeniden kurulur; paragraf ve kaynakça sınırları sezgiseldir, gerekirse kaynakça bölümünü elle seçin. Üstbilgi, altbilgi ve sayfa numaraları ayıklanır; tablo ve dipnot yapısı korunmaz. Düzeltmeler PDF dosyasına yazılamaz; denetim raporunu indirebilirsiniz.']}, ensure_ascii=True)); return
     if request['operation'] == 'xml':
         root = read_xml(data)
         for parent in root.iter():

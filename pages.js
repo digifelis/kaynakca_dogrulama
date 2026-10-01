@@ -1,7 +1,7 @@
 (() => {
   const pages = {
     kaynakca: { title: 'Kaynakça doğrulama', heading: 'Kaynakçanızı doğrulayın.', description: 'Kaynak listenizi yapıştırın, akademik kayıtlarla karşılaştırın ve düzeltilmiş APA 7 çıktısını alın.' },
-    word: { title: 'Yetim Kaynak kontrolü', heading: 'Makalenizdeki atıfları denetleyin.', description: 'Word dosyanızı yükleyin. Kaynakça eşleşmelerini, yetim atıfları ve yazar–yıl uyuşmazlıklarını inceleyin.' },
+    word: { title: 'Yetim Kaynak kontrolü', heading: 'Makalenizdeki atıfları denetleyin.', description: 'Word veya PDF dosyanızı yükleyin. Kaynakça eşleşmelerini, yetim atıfları ve yazar–yıl uyuşmazlıklarını inceleyin.' },
     icerik: { title: 'İçerik kontrolü', heading: 'Atıflarınızın kanıtını inceleyin.', description: 'Atıf cümlelerini ilgili yayınlarla karşılaştırın. İddiaları, bağlamı ve kaynak pasajlarını birlikte değerlendirin.' },
   };
   let current;

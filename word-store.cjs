@@ -7,7 +7,7 @@ const written=new Map();
 function file(id,suffix='.json'){if(!/^[a-f0-9-]{36}$/.test(id))throw Error('Geçersiz belge kimliği.');return path.join(root(),id+suffix);}
 function writeAtomic(target,data){const tmp=target+'.tmp';fs.writeFileSync(tmp,data);fs.renameSync(tmp,target);}
 function pdfFile(id,pdfId){if(!/^[\w-]{1,80}$/.test(pdfId))throw Error('Geçersiz PDF kimliği.');return file(id,'.pdf-'+pdfId+'.pdf');}
-function metadata(s){return {id:s.id,name:s.name,mode:s.mode||'word',createdAt:s.createdAt||s.touched,updatedAt:s.updatedAt||s.touched,job:s.job,pdfs:(s.pdfFiles||[]).map(({data,...v})=>v)};}
+function metadata(s){return {id:s.id,name:s.name,format:s.format||'docx',mode:s.mode||'word',createdAt:s.createdAt||s.touched,updatedAt:s.updatedAt||s.touched,job:s.job,pdfs:(s.pdfFiles||[]).map(({data,...v})=>v)};}
 function textsSignature(texts){return JSON.stringify(Object.entries(texts||{}).map(([key,t])=>[key,t?.passages?.length||0,t?.identity||'',!!t?.needsConfirmation,t?.access||'']));}
 function save(s){
   if(s.deleted)return;

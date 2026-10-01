@@ -6,3 +6,4 @@ data/
 
 # Kullanıcı makaleleri (kişisel belge, sürüm kontrolüne alınmaz)
 /*.docx
+__pycache__/

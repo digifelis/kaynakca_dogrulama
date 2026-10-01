@@ -70,6 +70,8 @@ function rebuild(s){
   s.findings=s.findings.filter(f=>!f.id.startsWith('orphan-'));
   const used=new Set(s.citations.flatMap(c=>[c.reference,...(c.candidates||[])]).filter(Boolean));
   for(const r of refs)if(!used.has(r.id))s.findings.push({id:'orphan-'+r.id,type:'Taranan metinde atıfı bulunmayan kaynak',reference:r.id,original:r.effectiveRaw});
+  // PDF text cannot be patched back into the file; findings stay report-only.
+  if(s.format==='pdf'){s.suggestions=new Map();for(const f of s.findings)delete f.patch;}
   s.effectiveReferences=refs;
 }
 const sessions=new Map();
@@ -92,7 +94,7 @@ function addDebugEvent(s,event){
   if(event.url)clean.url=safeEventUrl(event.url);s.debugEvents.push(clean);if(s.debugEvents.length>200)s.debugEvents.splice(0,s.debugEvents.length-200);return clean;
 }
 function llmConfigured(){return !!process.env.GROQ_API_KEY||Content.openRouterEnabled();}
-function snapshot(s){return {id:s.id,name:s.name,mode:s.mode||'word',checks:s.checks,checksStarted:s.checksStarted,autoPaused:!!s.autoPaused,revision:s.revision||0,createdAt:s.createdAt,updatedAt:s.updatedAt,pdfFiles:(s.pdfFiles||[]).map(({data,...v})=>v),range:s.range,paragraphs:effectiveParagraphs(s).map(p=>({id:p.id,index:p.index,text:p.text,part:p.part,protected:p.protected,editable:editable(s,p)})),warnings:s.warnings,references:(s.effectiveReferences||s.references).map(r=>({...r,pdf:s.texts[r.id]?{preview:s.texts[r.id].preview,needsConfirmation:s.texts[r.id].needsConfirmation,versionNotice:Content.preprintNotice(s.texts[r.id]),access:s.texts[r.id].access}:null})),citations:s.citations||[],findings:s.mode==='content'&&s.checks?.citations===false?[]:s.findings||[],job:s.job,referenceJob:s.referenceJob,debugEvents:s.debugEvents||[],applied:[...s.appliedGroups].map(([id,patches])=>({id,before:patches.map(p=>p.original).join(' '),after:patches.map(p=>p.replacement).join(' ')})),content:s.content,groqConfigured:llmConfigured(),openrouterConfigured:Content.openRouterEnabled()};}
+function snapshot(s){return {id:s.id,name:s.name,format:s.format||'docx',mode:s.mode||'word',checks:s.checks,checksStarted:s.checksStarted,autoPaused:!!s.autoPaused,revision:s.revision||0,createdAt:s.createdAt,updatedAt:s.updatedAt,pdfFiles:(s.pdfFiles||[]).map(({data,...v})=>v),range:s.range,paragraphs:effectiveParagraphs(s).map(p=>({id:p.id,index:p.index,text:p.text,part:p.part,protected:p.protected,editable:editable(s,p)})),warnings:s.warnings,references:(s.effectiveReferences||s.references).map(r=>({...r,pdf:s.texts[r.id]?{preview:s.texts[r.id].preview,needsConfirmation:s.texts[r.id].needsConfirmation,versionNotice:Content.preprintNotice(s.texts[r.id]),access:s.texts[r.id].access}:null})),citations:s.citations||[],findings:s.mode==='content'&&s.checks?.citations===false?[]:s.findings||[],job:s.job,referenceJob:s.referenceJob,debugEvents:s.debugEvents||[],applied:[...s.appliedGroups].map(([id,patches])=>({id,before:patches.map(p=>p.original).join(' '),after:patches.map(p=>p.replacement).join(' ')})),content:s.content,groqConfigured:llmConfigured(),openrouterConfigured:Content.openRouterEnabled()};}
 function startVerification(s,port,after,scope){
   if(s.job.running)throw Error('Önce devam eden işlemi durdurun.');
   s.worker?.terminate();s.followupContent=false;s.autoContentScope=after?(scope||{}):null;
@@ -213,16 +215,19 @@ function applyGroup(s,id){
   }
   const group=patches.map((p,i)=>({...p,_key:id+':'+i}));for(const p of group)s.applied.set(p._key,p);s.appliedGroups.set(id,group);
 }
+const PDF_READ_ONLY='PDF belgelerine düzeltme yazılamaz; önerileri inceleyip denetim raporunu indirebilirsiniz.';
 async function handle(req,res,url,json){
   if(!url.pathname.startsWith('/api/word'))return false;
   try{
     if(req.method!=='GET'&&req.headers['x-word-request']!=='1')return json(res,403,{error:'Yerel uygulama isteği gerekli.'}),true;
     if(url.pathname==='/api/word/upload'&&req.method==='POST'){
 
-      const input=await body(req);if(!/\.docx$/i.test(input.name||''))throw Error('Yalnız .docx desteklenir; .doc/.docm dosyasını Word’de .docx olarak kaydedin.');
-      const data=decode(input.data);const result=await python({operation:'inspect',data:data.toString('base64')});
+      const input=await body(req);const format=/\.pdf$/i.test(input.name||'')?'pdf':/\.docx$/i.test(input.name||'')?'docx':'';
+      if(!format)throw Error('Yalnız Word (.docx) ve PDF desteklenir; .doc/.docm dosyasını Word’de .docx olarak kaydedin.');
+      const data=decode(input.data);if(format==='pdf'&&!data.subarray(0,5).equals(Buffer.from('%PDF-')))throw Error('Geçerli PDF değil.');
+      const result=await python({operation:format==='pdf'?'inspect_pdf':'inspect',data:data.toString('base64')});
       const extracted=Analysis.extractReferences(result.paragraphs);
-      const s={id:randomUUID(),name:path.basename(input.name).slice(0,150),mode:input.mode==='content'?'content':'word',createdAt:Date.now(),revision:0,originalData:data,pdfFiles:[],data,paragraphs:result.paragraphs,warnings:result.warnings,...extracted,touched:Date.now(),applied:new Map(),appliedGroups:new Map(),manualConfirmed:new Set(),manualMappings:new Map(),contextOverrides:new Map(),content:{},texts:{},debugEvents:[],job:{running:false,message:extracted.needsRange?'Kaynakça sınırlarını seçin.':'Belge alındı; atıf eşleştirmesi hazır.'}};
+      const s={id:randomUUID(),name:path.basename(input.name).slice(0,150),format,mode:input.mode==='content'?'content':'word',createdAt:Date.now(),revision:0,originalData:data,pdfFiles:[],data,paragraphs:result.paragraphs,warnings:result.warnings,...extracted,touched:Date.now(),applied:new Map(),appliedGroups:new Map(),manualConfirmed:new Set(),manualMappings:new Map(),contextOverrides:new Map(),content:{},texts:{},debugEvents:[],job:{running:false,message:extracted.needsRange?'Kaynakça sınırlarını seçin.':'Belge alındı; atıf eşleştirmesi hazır.'}};
       if(s.mode==='content'){s.checks={references:input.checks?.references!==false,citations:input.checks?.citations!==false,llm:input.checks?.llm!==false};s.checksStarted=false;}if(!extracted.needsRange)rebuild(s);sessions.set(s.id,s);persist(s);json(res,200,snapshot(s));return true;
     }
     if(url.pathname==='/api/word/documents'&&req.method==='GET'){json(res,200,{documents:Store.list().map(d=>sessions.has(d.id)?{...d,job:sessions.get(d.id).job}:{...d,job:{...d.job,running:false}})});return true;}
@@ -232,9 +237,10 @@ async function handle(req,res,url,json){
       if(req.headers['if-none-match']===tag){res.writeHead(304,{ETag:tag,'Cache-Control':'no-cache'});res.end();return true;}
       res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-cache','X-Content-Type-Options':'nosniff',ETag:tag});res.end(body);return true;}
     if(req.method==='DELETE'){if(s.mutation)throw Error('Kayıt sürüyor; bitmesini bekleyin.');s.deleted=true;dispose(s);Store.remove(s.id);json(res,200,{deleted:true});return true;}
-    if(req.method==='GET'&&action==='original'){res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','Content-Disposition':'attachment; filename=original.docx'});res.end(s.originalData||s.data);return true;}
+    if(req.method==='GET'&&action==='original'){const pdf=s.format==='pdf';res.writeHead(200,{'Content-Type':pdf?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','Content-Disposition':'attachment; filename='+(pdf?'original.pdf':'original.docx')});res.end(s.originalData||s.data);return true;}
     if(req.method==='GET'&&action==='pdfdownload'){const pdf=(s.pdfFiles||[]).find(p=>p.id===url.searchParams.get('file'));if(!pdf)throw Error('PDF bulunamadı.');res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename=source.pdf'});res.end(Buffer.from(pdf.data,'base64'));return true;}
     if(req.method==='GET'&&action==='download'){
+      if(s.format==='pdf')throw Error(PDF_READ_ONLY);
       const out=await python({operation:'export',data:s.data.toString('base64'),patches:[...s.applied.values()]});
       res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','Content-Disposition':'attachment; filename="makale_duzeltilmis.docx"','Cache-Control':'no-store'});res.end(Buffer.from(out.data,'base64'));return true;
     }
@@ -280,6 +286,7 @@ async function handle(req,res,url,json){
     else if(action==='verify'){if(!s.references.length)throw Error('Önce kaynakça bölümünü seçin.');startVerification(s,req.socket.localPort);}
     else if(action==='content'||action==='check'){if(!s.references.length)throw Error('Önce kaynakça bölümünü seçin.');if(action==='check'){if(!llmConfigured())throw Error('Etkin bir GROQ_API_KEY veya OPENROUTER_API_KEY yapılandırılmamış.');if(s.checks?.references!==false&&!s.worker&&scopeNeedsVerification(s,input))startVerification(s,req.socket.localPort,true,input);else await startContent(s,input);}else await startContent(s,input);}
     else if(action==='apply'||action==='undo'||action==='applymany'){
+      if(s.format==='pdf')throw Error(PDF_READ_ONLY);
       if(s.job.running)throw Error('Düzeltmeden önce denetimi durdurun.');
       const oldApplied=new Map(s.applied),oldGroups=new Map(s.appliedGroups);
       if(action==='undo')removeApplied(s,input.id);
@@ -301,8 +308,8 @@ async function handle(req,res,url,json){
         try{
           for(const target of targets){s.manualMappings.set(target.id,ref.id);s.contextOverrides.delete(target.id);delete s.content[target.id];}
           s.manualConfirmed.add(ref.id);rebuild(s);
-          if(s.mode==='word')for(const target of targets)if(s.suggestions.has(target.id)){removeApplied(s,target.id);applyGroup(s,target.id);}
-          await python({operation:'export',data:s.data.toString('base64'),patches:[...s.applied.values()]});
+          if(s.mode==='word'&&s.format!=='pdf')for(const target of targets)if(s.suggestions.has(target.id)){removeApplied(s,target.id);applyGroup(s,target.id);}
+          if(s.format!=='pdf')await python({operation:'export',data:s.data.toString('base64'),patches:[...s.applied.values()]});
           rebuild(s);
         }catch(error){Object.assign(s,previous);rebuild(s);throw error;}
       }else {

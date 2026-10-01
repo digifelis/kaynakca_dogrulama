@@ -246,3 +246,14 @@ test('İçerik sayfasında Durdur sonrası otomatik denetim yeniden başlamaz', 
  await u.events.get('content-content:click')();
  assert.equal(JSON.parse(u.requests.filter(r => r.url.endsWith('/check')).at(-1).body).auto, undefined, 'kullanıcının başlattığı denetim otomatik sayılmaz');
 });
+test('PDF belgesinde düzeltilmiş dosya indirme ve toplu düzeltme gizlenir, salt okunur notu gösterilir', async () => {
+ const u = await ui();
+ assert.equal(u.element('word-download').hidden, false);
+ assert.equal(u.element('word-format-note').hidden, true);
+ u.sessions.get('session-1').format = 'pdf';
+ await u.events.get('word-verify:click')();
+ assert.equal(u.element('word-download').hidden, true);
+ assert.equal(u.element('word-applymany').hidden, true);
+ assert.equal(u.element('word-format-note').hidden, false);
+ assert.match(u.element('word-format-note').textContent, /salt okunur/);
+});
