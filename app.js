@@ -153,7 +153,7 @@ async function runVerification() {
   clearButton.disabled = true;
   const exampleButtons = document.querySelectorAll('.example-button');
   exampleButtons.forEach(button => { button.disabled = true; });
-  verifyButton.innerHTML = '<span class="button-icon">…</span> Kontrol ediliyor';
+  verifyButton.textContent = 'Kontrol ediliyor…';
   progressSection.classList.remove('hidden');
   resultsSection.classList.remove('hidden');
   outputSection.classList.add('hidden');
@@ -249,7 +249,7 @@ async function runVerification() {
     input.disabled = false;
     clearButton.disabled = false;
     exampleButtons.forEach(button => { button.disabled = false; });
-    verifyButton.innerHTML = '<span class="button-icon">↗</span> Yeniden doğrula';
+    verifyButton.textContent = 'Yeniden doğrula';
   }
 }
 

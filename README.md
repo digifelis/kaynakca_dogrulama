@@ -79,7 +79,9 @@ Referans belgeler: [TR Dizin](https://development.trdizin.gov.tr/), [NCBI](https
 ## Dosyalar
 
 - `index.html`: Türkçe arayüz ve erişilebilir yapı
-- `styles.css`: araştırma masası görsel dili ve responsive düzen
+- `styles.css`: renk/yazı tokenları, açık ve koyu tema, responsive düzen
+- `ui.js`: Word yükleme alanında sürükle-bırak durumu ve belge listesinin katlanması
+- `word-store.cjs`: belge arşivi; DOCX, PDF ve yayın metinleri ayrı dosyalarda, yalnız değiştiklerinde yazılır
 - `app.js`: kullanıcı akışı, sonuç gösterimi ve kopyalama
 - `reference-engine.js`: ayrıştırma, hız/kota yönetimi, sağlayıcı sorguları ve eşleştirme
 - `providers.js`: ek kaynak adaptörleri, yayın türüne göre seçim ve kaynak kataloğu

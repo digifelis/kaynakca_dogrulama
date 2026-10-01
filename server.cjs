@@ -171,7 +171,7 @@ function createServer({ inspectWeb = webInspect } = {}) {
           return json(res, 502, { error: 'Dış kaynağa erişilemedi; tekrar deneyin', provider, detail: String(error?.message || 'Bilinmeyen bağlantı hatası').slice(0, 300) });
         }
       }
-      const files = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/pages.js': ['pages.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'],
+      const files = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/pages.js': ['pages.js', 'text/javascript'], '/ui.js': ['ui.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'],
         '/web-reference.js': ['web-reference.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
       const file = files[url.pathname];
       if (!file) return json(res, 404, { error: 'Dosya bulunamadı' });
