@@ -92,7 +92,7 @@ function addDebugEvent(s,event){
   if(event.url)clean.url=safeEventUrl(event.url);s.debugEvents.push(clean);if(s.debugEvents.length>200)s.debugEvents.splice(0,s.debugEvents.length-200);return clean;
 }
 function llmConfigured(){return !!process.env.GROQ_API_KEY||Content.openRouterEnabled();}
-function snapshot(s){return {id:s.id,name:s.name,mode:s.mode||'word',checks:s.checks,checksStarted:s.checksStarted,revision:s.revision||0,createdAt:s.createdAt,updatedAt:s.updatedAt,pdfFiles:(s.pdfFiles||[]).map(({data,...v})=>v),range:s.range,paragraphs:effectiveParagraphs(s).map(p=>({id:p.id,index:p.index,text:p.text,part:p.part,protected:p.protected,editable:editable(s,p)})),warnings:s.warnings,references:(s.effectiveReferences||s.references).map(r=>({...r,pdf:s.texts[r.id]?{preview:s.texts[r.id].preview,needsConfirmation:s.texts[r.id].needsConfirmation,versionNotice:Content.preprintNotice(s.texts[r.id]),access:s.texts[r.id].access}:null})),citations:s.citations||[],findings:s.mode==='content'&&s.checks?.citations===false?[]:s.findings||[],job:s.job,referenceJob:s.referenceJob,debugEvents:s.debugEvents||[],applied:[...s.appliedGroups].map(([id,patches])=>({id,before:patches.map(p=>p.original).join(' '),after:patches.map(p=>p.replacement).join(' ')})),content:s.content,groqConfigured:llmConfigured(),openrouterConfigured:Content.openRouterEnabled()};}
+function snapshot(s){return {id:s.id,name:s.name,mode:s.mode||'word',checks:s.checks,checksStarted:s.checksStarted,autoPaused:!!s.autoPaused,revision:s.revision||0,createdAt:s.createdAt,updatedAt:s.updatedAt,pdfFiles:(s.pdfFiles||[]).map(({data,...v})=>v),range:s.range,paragraphs:effectiveParagraphs(s).map(p=>({id:p.id,index:p.index,text:p.text,part:p.part,protected:p.protected,editable:editable(s,p)})),warnings:s.warnings,references:(s.effectiveReferences||s.references).map(r=>({...r,pdf:s.texts[r.id]?{preview:s.texts[r.id].preview,needsConfirmation:s.texts[r.id].needsConfirmation,versionNotice:Content.preprintNotice(s.texts[r.id]),access:s.texts[r.id].access}:null})),citations:s.citations||[],findings:s.mode==='content'&&s.checks?.citations===false?[]:s.findings||[],job:s.job,referenceJob:s.referenceJob,debugEvents:s.debugEvents||[],applied:[...s.appliedGroups].map(([id,patches])=>({id,before:patches.map(p=>p.original).join(' '),after:patches.map(p=>p.replacement).join(' ')})),content:s.content,groqConfigured:llmConfigured(),openrouterConfigured:Content.openRouterEnabled()};}
 function startVerification(s,port,after,scope){
   if(s.job.running)throw Error('Önce devam eden işlemi durdurun.');
   s.worker?.terminate();s.followupContent=false;s.autoContentScope=after?(scope||{}):null;
@@ -242,7 +242,10 @@ async function handle(req,res,url,json){
     const input=await body(req);
     if(s.mutation)throw Error('Belge kaydediliyor; tekrar deneyin.');
     if(action==='paragraph'){await saveParagraph(s,input);persist(s);json(res,200,snapshot(s));return true;}
-    if(action==='stop'){s.followupContent=false;s.autoContentScope=null;if(s.referenceJob)s.referenceJob.running=false;s.worker?.terminate();s.worker=null;s.controller?.abort();s.controller=null;s.job.running=false;s.job.message='İşlem durduruldu; tekrar başlatabilirsiniz.';delete s.job.retryAt;}
+    // Stop pauses automatic restarts until the user starts a check again; client-triggered auto checks are ignored meanwhile.
+    if(['runchecks','verify','content','context'].includes(action)||action==='check'&&!input.auto)s.autoPaused=false;
+    if(action==='check'&&input.auto&&s.autoPaused){json(res,200,snapshot(s));return true;}
+    if(action==='stop'){s.autoPaused=true;s.followupContent=false;s.autoContentScope=null;if(s.referenceJob)s.referenceJob.running=false;s.worker?.terminate();s.worker=null;s.controller?.abort();s.controller=null;s.job.running=false;s.job.message='İşlem durduruldu; tekrar başlatabilirsiniz.';delete s.job.retryAt;}
     else if(action==='range'){
       s.worker?.terminate();s.worker=null;if(s.referenceJob)s.referenceJob.running=false;
       if(s.job.running)throw Error('Önce işlemi durdurun.');

@@ -83,8 +83,8 @@ function createWordWorkspace(prefix,mode) {
   }
   function pendingMatchedCitations(){return isContent&&state?.groqConfigured&&state?.range?.start>=0?(state.citations||[]).filter(c=>c.reference&&!c.issue&&!c.content):[];}
   function maybeAutoContent(){
-    if(state?.checks&&(state.checksStarted!==true||!state.checks.llm)||busy||autoStarting||state?.job?.running||state?.referenceJob?.running||!pendingMatchedCitations().length)return;
-    autoStarting=true;setTimeout(()=>action('check',{matchedOnly:true,pendingOnly:true}).finally(()=>{autoStarting=false;}),0);
+    if(state?.autoPaused||state?.checks&&(state.checksStarted!==true||!state.checks.llm)||busy||autoStarting||state?.job?.running||state?.referenceJob?.running||!pendingMatchedCitations().length)return;
+    autoStarting=true;setTimeout(()=>action('check',{matchedOnly:true,pendingOnly:true,auto:true}).finally(()=>{autoStarting=false;}),0);
   }
   function schedule(){clearTimeout(poll);if(state?.job.running||state?.referenceJob?.running){const id=state.id;poll=setTimeout(async()=>{try{const next=await api('',{},'GET');if(state?.id!==id)return;if(next){state=next;render();}else renderProgress();schedule();if(!state.job.running&&!state.referenceJob?.running){library();maybeAutoContent();}}catch(e){if(state?.id===id)notify(e.message);}},1500);}else maybeAutoContent();}
   function button(action,id,label){return `<button class="copy-button" type="button" data-action="${action}" data-id="${esc(id)}" ${busy||state.job.running?'disabled':''}>${label}</button>`;}

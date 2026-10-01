@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../word-app.js'), 'utf8');
 
 async function ui() {
-  const elements = new Map(), events = new Map(), requests = [], blobs = [], sessions = new Map();
+  const elements = new Map(), events = new Map(), requests = [], blobs = [], sessions = new Map(), timers = [];
   let uploads=0;
   const element = id => {
     if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', value: '', dataset: {}, disabled: false,
@@ -23,14 +23,14 @@ async function ui() {
       { id: 'missing-c2', citation: 'c2', paragraph: 'p1', type: 'Kaynakçası olmayan atıf', original: 'Yetim atıf' },
       { id: 'orphan-r2', reference: 'r2', type: 'Atıfsız kaynakça', original: 'Yetim yayın' }] };
   const document = { getElementById: element, createElement: () => ({ click() {} }) };
-  vm.runInNewContext(source, { document, Blob, Uint8Array, btoa, setTimeout: () => 1, clearTimeout() {},
+  vm.runInNewContext(source, { document, Blob, Uint8Array, btoa, setTimeout: (fn, ms) => { timers.push({ fn, ms: ms || 0 }); return timers.length; }, clearTimeout() {},
     URL: { createObjectURL(blob) { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
     fetch: async (url, options) => {
       requests.push({ url, ...options });
       if(url==='/api/word/documents')return {ok:true,json:async()=>({documents:[]})};
       let result;
       if(url.endsWith('/upload')) { result=JSON.parse(JSON.stringify(state));result.id='session-'+(++uploads);result.name=JSON.parse(options.body).name;sessions.set(result.id,result); }
-      else { result=sessions.get(url.split('/')[3]);if(url.endsWith('/verify'))result.job.running=true;if(url.endsWith('/stop'))result.job.running=false; }
+      else { result=sessions.get(url.split('/')[3]);if(url.endsWith('/verify'))result.job.running=true;if(url.endsWith('/stop')){result.job.running=false;result.autoPaused=true;} }
       return { ok: true, json: async () => JSON.parse(JSON.stringify(result)) };
     } });
   element('word-upload').files = [{ name: 'test.docx', size: 1, arrayBuffer: async () => new ArrayBuffer(1) }];
@@ -38,7 +38,7 @@ async function ui() {
   const dispatch = (type, target) => events.get('word-panel:' + type)({ target });
   const click = (selector, dataset) => dispatch('click', { closest: s => s === selector ? { dataset } : null });
   const search = text => { element('word-search').value = text; events.get('word-search:input')(); };
-  return { element, events, requests, blobs, sessions, click, dispatch, search };
+  return { element, events, requests, blobs, sessions, timers, click, dispatch, search };
 }
 
 test('Word review separates orphan lists and renders escaped inline paragraphs', async () => {
@@ -227,4 +227,22 @@ test('Kaynakları doğrula Word sayfasında görünür bir ilerleme çubuğu gö
  assert.match(html, /1 kayıt kesinleşti/);
  assert.match(html, /Kaynak 1 sorgulandı/);
  assert.match(html, /is-active/);
+});
+test('İçerik sayfasında Durdur sonrası otomatik denetim yeniden başlamaz', async () => {
+ const u = await ui();
+ u.element('content-upload').files = [{ name: 'durdur.docx', size: 1, arrayBuffer: async () => new ArrayBuffer(1) }];
+ await u.events.get('content-upload:change')();
+ const session = u.sessions.get('session-2');
+ Object.assign(session, { checks: { references: true, citations: true, llm: true }, checksStarted: true });
+ session.citations.push({ id: 'c3', text: 'Yılmaz (2020)', paragraph: 'p1', reference: 'r1', context: ['Yılmaz (2020) bulgusu.'] });
+ const runZeroTimers = async () => { for (const timer of u.timers.splice(0)) if (!timer.ms) await timer.fn(); };
+ u.timers.length = 0;
+ await u.events.get('content-stop:click')();
+ await runZeroTimers();
+ const stopAt = u.requests.findIndex(r => r.url === '/api/word/session-2/stop');
+ assert.ok(stopAt >= 0);
+ assert.deepEqual(u.requests.slice(stopAt).filter(r => r.url.endsWith('/check')).map(r => r.url), []);
+ session.autoPaused = false;
+ await u.events.get('content-content:click')();
+ assert.equal(JSON.parse(u.requests.filter(r => r.url.endsWith('/check')).at(-1).body).auto, undefined, 'kullanıcının başlattığı denetim otomatik sayılmaz');
 });

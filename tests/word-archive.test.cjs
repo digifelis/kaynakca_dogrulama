@@ -81,3 +81,13 @@ test('state polling revalidates with ETag and returns 304 while the document is 
   const changed=await fetch(a.base+'/api/word/'+id,{headers:{'If-None-Match':tag}});assert.equal(changed.status,200);assert.notEqual(changed.headers.get('etag'),tag);await changed.json();
  }finally{if(id&&S.sessions.has(id)){Store.remove(id);S.dispose(S.sessions.get(id));}await a.close();}
 });
+test('Durdur sonrası arayüzün otomatik içerik isteği işi yeniden başlatmaz',async()=>{
+ const a=await api();let id;const oldKey=process.env.GROQ_API_KEY;process.env.GROQ_API_KEY='synthetic-test';
+ try{
+  let s=await a.post('/api/word/upload',{name:'stop.docx',mode:'content',...fixture});id=s.id;
+  s=await a.post('/api/word/'+id+'/stop',{});assert.equal(s.autoPaused,true);assert.equal(s.job.running,false);
+  s=await a.post('/api/word/'+id+'/check',{matchedOnly:true,pendingOnly:true,auto:true});
+  assert.equal(s.job.running,false);assert.equal(!!s.referenceJob?.running,false);assert.equal(s.autoPaused,true);
+  assert.equal(Store.load(id).autoPaused,true,'duraklatma arşivde de korunur');
+ }finally{if(oldKey===undefined)delete process.env.GROQ_API_KEY;else process.env.GROQ_API_KEY=oldKey;if(id&&S.sessions.has(id)){Store.remove(id);S.dispose(S.sessions.get(id));}await a.close();}
+});
