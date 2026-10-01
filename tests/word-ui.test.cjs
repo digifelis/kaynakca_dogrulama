@@ -257,3 +257,17 @@ test('PDF belgesinde düzeltilmiş dosya indirme ve toplu düzeltme gizlenir, sa
  assert.equal(u.element('word-format-note').hidden, false);
  assert.match(u.element('word-format-note').textContent, /salt okunur/);
 });
+test('Kaynak kimliği kabul edilen düzeltme gerekli kayıt Doğrulandı listesine geçer', async () => {
+ const u = await ui();
+ const session = u.sessions.get('session-1');
+ session.references[0].verification = { status: 'verified', statusText: 'Doğrulandı', matched: { title: 'Yılmaz' }, suggested: 'Yılmaz, A. (2020). Tamamen farklı biçimlenmiş künye. Dergi, 1(2), 3-4.' };
+ await u.events.get('word-verify:click')();
+ const summary = () => u.element('word-reference-summary').innerHTML;
+ assert.match(summary(), /aria-label="1 doğrulandı – düzeltme gerekli:/);
+ assert.match(summary(), /aria-label="0 doğrulandı:/);
+ session.references[0].confirmed = true;
+ await u.events.get('word-verify:click')();
+ assert.match(summary(), /aria-label="0 doğrulandı – düzeltme gerekli:/);
+ assert.match(summary(), /aria-label="1 doğrulandı:/);
+ assert.match(u.element('word-references').innerHTML, /kaynak kimliği sizin tarafınızdan kabul edildi/);
+});

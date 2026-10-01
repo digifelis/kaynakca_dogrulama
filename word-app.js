@@ -69,7 +69,8 @@ function createWordWorkspace(prefix,mode) {
     if(!html)return esc(v.suggested);
     return html.split(/(<\/?em>)/g).map(part=>part==='<em>'||part==='</em>'?part:esc(part.replace(/&(?:amp|lt|gt|quot|#039);/g,x=>({'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&#039;':"'"}[x])))).join('');
   }
-  function referenceStatus(r){return r.verification?.status==='verified'&&!r.accepted&&referenceComparison(r).different?'correction':r.verification?.status||'pending';}
+  // Accepting the source identity settles a verified record even when its text still differs from the index record.
+  function referenceStatus(r){return r.verification?.status==='verified'&&!r.accepted&&!r.confirmed&&referenceComparison(r).different?'correction':r.verification?.status||'pending';}
   let referenceFilter='all';
   async function encoded(file){if(file.size>20*1024*1024)throw Error('Dosya en fazla 20 MB olabilir.');const bytes=new Uint8Array(await file.arrayBuffer());let value='';for(let i=0;i<bytes.length;i+=32768)value+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(value);}
   function notify(message){const messageElement=$('message');if(messageElement)messageElement.textContent=message;}
@@ -188,7 +189,7 @@ function createWordWorkspace(prefix,mode) {
     const referenceCounts=Object.fromEntries(Object.keys(referenceFilters).map(key=>[key,key==='all'?state.references.length:state.references.filter(r=>referenceStatus(r)===key).length]));
     $('reference-summary').innerHTML=Object.entries(referenceFilters).map(([status,label])=>`<button type="button" class="summary-stat" data-reference-filter="${status}" aria-pressed="${referenceFilter===status}" aria-label="${referenceCounts[status]} ${label}: kaynakça kayıtlarını göster"><strong>${referenceCounts[status]}</strong><span>${label}</span></button>`).join('');
     $('references').innerHTML=state.references.map((r,i)=>{
-      const v=r.verification,comparison=referenceComparison(r);const status=referenceStatus(r)==='correction'?'Doğrulandı – düzeltme gerekli':v?.statusText||'Henüz dizin doğrulaması yapılmadı';
+      const v=r.verification,comparison=referenceComparison(r);const status=referenceStatus(r)==='correction'?'Doğrulandı – düzeltme gerekli':v?.status==='verified'&&r.confirmed&&!r.accepted&&comparison.different?'Doğrulandı – kaynak kimliği sizin tarafınızdan kabul edildi':v?.statusText||'Henüz dizin doğrulaması yapılmadı';
       const tone=v?.status==='verified'?'verified':v?.status==='failed'?'failed':v?.status==='error'?'error':v?.status==='pending'?'pending':'review';
       if((referenceFilter!=='all'&&referenceStatus(r)!==referenceFilter)||!matches(r.raw,v?.suggested,v?.reason))return '';
       return `<article id="${prefix}-reference-${esc(r.id)}" class="result-card ${tone}"><div class="result-top"><span class="result-number">${String(i+1).padStart(2,'0')}</span><span class="status-pill ${tone}">${esc(status)}</span></div><p class="raw-reference">${esc(r.raw)}</p>${comparison.score!==null?`<p class="provider-note" title="Özgün ve önerilen künye metinlerinin karakter çifti benzerliği; yayın kimliği güven puanı değildir.">Künye benzerliği: <strong>${comparison.score}/100</strong></p>`:''}${v?.suggested&&comparison.different?`<p class="matched-reference"><strong>Öneri:</strong> ${referenceMarkup(v)}</p>`:''}<p class="provider-note">${esc(v?.reason||'')}</p>
