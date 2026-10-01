@@ -98,7 +98,7 @@ function createWordWorkspace(prefix,mode) {
     autoStarting=true;setTimeout(()=>action('check',{matchedOnly:true,pendingOnly:true,auto:true}).finally(()=>{autoStarting=false;}),0);
   }
   function schedule(){clearTimeout(poll);if(state?.job.running||state?.referenceJob?.running){const id=state.id;poll=setTimeout(async()=>{try{const next=await api('',{},'GET');if(state?.id!==id)return;if(next){state=next;render();}else renderProgress();schedule();if(!state.job.running&&!state.referenceJob?.running){library();maybeAutoContent();}}catch(e){if(state?.id===id)notify(e.message);}},1500);}else maybeAutoContent();}
-  function button(action,id,label){return `<button class="copy-button" type="button" data-action="${action}" data-id="${esc(id)}" ${busy||state.job.running?'disabled':''}>${label}</button>`;}
+  function button(action,id,label,variant=''){return `<button class="copy-button${variant?' '+variant:''}" type="button" data-action="${action}" data-id="${esc(id)}" ${busy||state.job.running?'disabled':''}>${label}</button>`;}
   function location(c){return `<a class="word-location" href="#${prefix}-p-${esc(c.paragraph)}" data-show="${esc(c.paragraph)}">${esc(c.location||'Belgede göster')}</a>`;}
   function groupFindings(){return {
     issues:state.findings.filter(f=>!f.id.startsWith('orphan-')&&!f.type.startsWith('Kaynakçası olmayan atıf')),
@@ -204,7 +204,7 @@ function createWordWorkspace(prefix,mode) {
       if((referenceFilter!=='all'&&referenceStatus(r)!==referenceFilter)||!matches(r.raw,v?.suggested,v?.reason))return '';
       return `<article id="${prefix}-reference-${esc(r.id)}" class="result-card ${tone}"><div class="result-top"><span class="result-number">${String(i+1).padStart(2,'0')}</span><span class="status-pill ${tone}">${esc(status)}</span></div><p class="raw-reference">${esc(r.raw)}</p>${comparison.score!==null?`<p class="provider-note" title="Özgün ve önerilen künye metinlerinin karakter çifti benzerliği; yayın kimliği güven puanı değildir.">Künye benzerliği: <strong>${comparison.score}/100</strong></p>`:''}${referenceSuggestion(r,v,comparison)}<p class="provider-note">${esc(v?.reason||'')}</p>
       ${typeof ReferenceWeb !== 'undefined' ? ReferenceWeb.details(v) : ''}
-      ${button('confirm',r.id,r.pdf?.needsConfirmation?'Bu PDF sürümünü kabul et':r.confirmed?'Kaynak kimliği kabul edildi':'Kaynak kimliğini kabul et')}
+      ${button('confirm',r.id,r.pdf?.needsConfirmation?'Bu PDF sürümünü kabul et':r.confirmed?'Kaynak kimliği kabul edildi':'Kaynak kimliğini kabul et','btn-secondary')}
       <details><summary>Kaynakça kayıt sınırlarını düzenle</summary><p>Birleştirme/ayırma, belge için doğrulama sonuçlarını ve seçilen düzeltmeleri sıfırlar. Aynı paragraftaki farklı kayıtları Word’de ayrı paragraflara ayırın.</p>${i<state.references.length-1?button('merge',r.id,'Sonraki kayıtla birleştir'):''}${r.paragraphs.length>1?button('split',r.id,'Her paragrafı ayrı kayıt yap'):''}</details>
       <label class="word-pdf">Yayının PDF’sini ekle <input type="file" accept=".pdf" data-reference="${esc(r.id)}" ${job.running?'disabled':''}></label>
       ${r.pdf?`<details><summary>${esc(r.pdf.access)} ${r.pdf.needsConfirmation?'· Yayın kimliği onayı gerekiyor':''}</summary><p>${esc(r.pdf.preview||'Yayın metni alındı.')}</p>${r.pdf.versionNotice?`<p class="word-guidance"><strong>PDF sürüm uyarısı:</strong> “${esc(r.pdf.versionNotice)}”</p>`:''}</details>`:''}
