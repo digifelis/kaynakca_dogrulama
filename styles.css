@@ -442,3 +442,10 @@ body[data-page="word"] .word-navigation { grid-template-columns: repeat(4, minma
 
 /* Read-only notice for PDF manuscripts. */
 .format-note { margin: 10px 0 0; padding: 10px 14px; border-radius: var(--radius-s); background: var(--accent-soft); color: var(--ink); font-size: 14px; line-height: 1.55; }
+
+/* Editable bibliography suggestion inside reference cards. */
+.reference-suggestion .word-field { margin-bottom: 6px; }
+.reference-suggestion-label { margin: 0 0 4px; color: var(--ink); font-size: 13.5px; font-weight: 600; }
+.reference-suggestion textarea { min-height: 96px; }
+.reference-suggestion .provider-note { margin: 0 0 10px; }
+.reference-suggestion .word-card-actions .copy-button { margin: 0; }

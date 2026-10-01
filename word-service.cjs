@@ -31,6 +31,22 @@ function effectiveParagraphs(s){return s.paragraphs.map(p=>{let text=p.text;cons
 function refPatches(s,r,result){const replacement=result.suggested||result.corrected;return r.paragraphs.map((id,i)=>{
   const p=s.paragraphs.find(p=>p.id===id);return {paragraph:id,start:0,end:p.text.length,original:p.text,replacement:i?'':replacement,whole:true,spans:i?[{text:'',italic:false}]:spans(result.suggestedHtml||result.correctedHtml,replacement)};
 });}
+// Italic phrases of the formatted suggestion (journal, volume) stay italic wherever they survive the user's edit.
+function italicHtml(html,text){
+  const decode=v=>v.replace(/&(?:amp|lt|gt|quot|#039);/g,m=>({'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&#039;':"'"}[m]));
+  const escape=v=>v.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  let out='',pos=0;
+  for(const m of String(html||'').matchAll(/<em>([\s\S]*?)<\/em>/g)){const phrase=decode(m[1].replace(/<[^>]*>/g,''));const at=phrase?text.indexOf(phrase,pos):-1;if(at<0)continue;out+=escape(text.slice(pos,at))+'<em>'+escape(phrase)+'</em>';pos=at+phrase.length;}
+  return out+escape(text.slice(pos));
+}
+// "Öneriyi kullan" sends the textarea text; it replaces the index suggestion for this one application.
+function customReference(s,id,text){
+  const r=s.references.find(r=>r.id===id);if(!r)throw Error('Kaynak bulunamadı.');
+  const v=r.verification;if(!v?.matched&&!v?.suggested)throw Error('Bu kayıt için öneri yok; önce kaynakları doğrulayın.');
+  if(r.protected)throw Error('Bu kayıt korunan bir alanda; Word’de elle düzeltin.');
+  const value=text.replace(/\s+/g,' ').trim();if(!value||value.length>4000)throw Error('Künye metni boş olamaz ve en fazla 4000 karakter olabilir.');
+  s.suggestions.set('bib-'+id,refPatches(s,r,{suggested:value,suggestedHtml:italicHtml(v.suggestedHtml||v.correctedHtml,value)}));
+}
 function rebuild(s){
   if(s.mode==='content'&&s.checks&&!s.checks.citations&&!s.checks.llm){s.citations=[];s.findings=[];s.effectiveReferences=s.references;s.suggestions=new Map();return;}
 
@@ -293,7 +309,7 @@ async function handle(req,res,url,json){
       else if(action==='applymany'){
         if(!Array.isArray(input.ids)||!input.ids.length||input.ids.length>1000)throw Error('Düzeltme seçimi geçersiz.');
         try{for(const id of input.ids)applyGroup(s,id);}catch(e){s.applied=oldApplied;s.appliedGroups=oldGroups;throw e;}
-      }else applyGroup(s,input.id);
+      }else{if(typeof input.text==='string'&&String(input.id).startsWith('bib-'))customReference(s,input.id.slice(4),input.text);applyGroup(s,input.id);}
       // Verify the actual OOXML edit before accepting the patch.
       try{await python({operation:'export',data:s.data.toString('base64'),patches:[...s.applied.values()]});}catch(e){s.applied=oldApplied;s.appliedGroups=oldGroups;throw e;}
       s.content={};rebuild(s);

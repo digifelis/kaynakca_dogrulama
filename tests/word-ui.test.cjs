@@ -271,3 +271,19 @@ test('Kaynak kimliği kabul edilen düzeltme gerekli kayıt Doğrulandı listesi
  assert.match(summary(), /aria-label="1 doğrulandı:/);
  assert.match(u.element('word-references').innerHTML, /kaynak kimliği sizin tarafınızdan kabul edildi/);
 });
+test('İnceleme gerekli kaynakta önerilen künye textarea içinde gelir ve Öneriyi kullan düzenlenmiş metni gönderir', async () => {
+ const u = await ui();
+ const session = u.sessions.get('session-1');
+ session.references[0].verification = { status: 'review', statusText: 'İncelenmeli', matched: { title: 'Yılmaz' }, suggested: 'Yılmaz, A. (2020). Önerilen başlık. Dergi, 1(2), 3-4.' };
+ session.references[1].verification = { status: 'verified', statusText: 'Doğrulandı', matched: { title: 'Yetim' }, suggested: 'Yetim, B. (2019). Dizin künyesi. Dergi, 2, 5-6.' };
+ await u.events.get('word-verify:click')();
+ const html = u.element('word-references').innerHTML;
+ assert.match(html, /<textarea data-reference-draft="r1"[^>]*>Yılmaz, A\. \(2020\)\. Önerilen başlık\. Dergi, 1\(2\), 3-4\.<\/textarea>/);
+ assert.match(html, /<textarea data-reference-draft="r2"/, 'düzeltme gerekli kayıtta da textarea var');
+ assert.equal((html.match(/data-action="usesuggestion"/g) || []).length, 2);
+ u.events.get('word-panel:input')({ target: { dataset: { referenceDraft: 'r1' }, value: 'Yılmaz, A. (2020). Kullanıcı düzeltmesi. Dergi, 1(2), 3-4.' } });
+ u.click('[data-action]', { action: 'usesuggestion', id: 'r1' });
+ await new Promise(r => setImmediate(r));
+ const apply = u.requests.find(r => r.url.endsWith('/apply'));
+ assert.deepEqual(JSON.parse(apply.body), { id: 'bib-r1', text: 'Yılmaz, A. (2020). Kullanıcı düzeltmesi. Dergi, 1(2), 3-4.' });
+});

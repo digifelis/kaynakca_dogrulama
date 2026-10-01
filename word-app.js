@@ -63,6 +63,16 @@ function createWordWorkspace(prefix,mode) {
     let overlap=0;for(let i=0;i<suggested.length-1;i++){const key=suggested.slice(i,i+2),count=pairs.get(key)||0;if(count){overlap++;pairs.set(key,count-1);}}
     return {different:true,score:Math.min(99,Math.round(200*overlap/Math.max(1,original.length+suggested.length-2)))};
   }
+  // The suggested entry is an editable draft; "Öneriyi kullan" writes the textarea's text into the bibliography.
+  function referenceSuggestion(r,v,comparison){
+    if(!v?.suggested)return '';
+    const applicable=!!(v.matched&&!r.protected&&state.format!=='pdf');
+    if(r.accepted)return `<div class="word-correction reference-suggestion"><p class="reference-suggestion-label">Kaynakçaya uygulanan künye</p><p class="matched-reference">${esc(r.effectiveRaw||v.suggested)}</p>${applicable?`<div class="word-card-actions">${button('undo','bib-'+r.id,'Kaynakça düzeltmesini geri al')}</div>`:''}</div>`;
+    if(!comparison.different)return '';
+    const draft=drafts.get('reference:'+r.id)??v.suggested,edited=draft!==v.suggested;
+    const note=applicable?'Dergi adı ve cilt italikleri, metinde aynen kaldıkları sürece korunur.':state.format==='pdf'?'PDF belgesine yazılamaz; metni kopyalayıp kaynak dosyanızda düzeltin.':r.protected?'Bu kayıt korunan bir alanda; Word’de elle düzeltin.':'Bu öneri kesin bir dizin eşleşmesine dayanmıyor; kaynağı inceleyip Word’de elle düzeltin.';
+    return `<div class="word-correction reference-suggestion"><label class="word-field"><span class="reference-suggestion-label">Önerilen künye${applicable?' (kullanmadan önce düzenleyebilirsiniz)':''}</span><textarea data-reference-draft="${esc(r.id)}" rows="4" ${applicable&&!busy&&!state.job.running?'':'readonly'}>${esc(draft)}</textarea></label><p class="provider-note">${note}</p>${applicable?`<div class="word-card-actions"><span>${button('usesuggestion',r.id,'Öneriyi kullan')}${edited?` <button class="text-button" type="button" data-action="resetsuggestion" data-id="${esc(r.id)}">Özgün öneriye dön</button>`:''}</span></div>`:''}</div>`;
+  }
   function referenceMarkup(v){
     // Only formatting produced by the bibliography formatter is allowed as markup.
     const html=String(v.suggestedHtml||'');
@@ -192,9 +202,8 @@ function createWordWorkspace(prefix,mode) {
       const v=r.verification,comparison=referenceComparison(r);const status=referenceStatus(r)==='correction'?'Doğrulandı – düzeltme gerekli':v?.status==='verified'&&r.confirmed&&!r.accepted&&comparison.different?'Doğrulandı – kaynak kimliği sizin tarafınızdan kabul edildi':v?.statusText||'Henüz dizin doğrulaması yapılmadı';
       const tone=v?.status==='verified'?'verified':v?.status==='failed'?'failed':v?.status==='error'?'error':v?.status==='pending'?'pending':'review';
       if((referenceFilter!=='all'&&referenceStatus(r)!==referenceFilter)||!matches(r.raw,v?.suggested,v?.reason))return '';
-      return `<article id="${prefix}-reference-${esc(r.id)}" class="result-card ${tone}"><div class="result-top"><span class="result-number">${String(i+1).padStart(2,'0')}</span><span class="status-pill ${tone}">${esc(status)}</span></div><p class="raw-reference">${esc(r.raw)}</p>${comparison.score!==null?`<p class="provider-note" title="Özgün ve önerilen künye metinlerinin karakter çifti benzerliği; yayın kimliği güven puanı değildir.">Künye benzerliği: <strong>${comparison.score}/100</strong></p>`:''}${v?.suggested&&comparison.different?`<p class="matched-reference"><strong>Öneri:</strong> ${referenceMarkup(v)}</p>`:''}<p class="provider-note">${esc(v?.reason||'')}</p>
+      return `<article id="${prefix}-reference-${esc(r.id)}" class="result-card ${tone}"><div class="result-top"><span class="result-number">${String(i+1).padStart(2,'0')}</span><span class="status-pill ${tone}">${esc(status)}</span></div><p class="raw-reference">${esc(r.raw)}</p>${comparison.score!==null?`<p class="provider-note" title="Özgün ve önerilen künye metinlerinin karakter çifti benzerliği; yayın kimliği güven puanı değildir.">Künye benzerliği: <strong>${comparison.score}/100</strong></p>`:''}${referenceSuggestion(r,v,comparison)}<p class="provider-note">${esc(v?.reason||'')}</p>
       ${typeof ReferenceWeb !== 'undefined' ? ReferenceWeb.details(v) : ''}
-      ${v?.matched&&!r.protected&&state.format!=='pdf'&&(comparison.different||r.accepted)?(r.accepted?button('undo','bib-'+r.id,'Kaynakça düzeltmesini geri al'):button('apply','bib-'+r.id,'Kaynakçada düzeltmeyi uygula')):''}
       ${button('confirm',r.id,r.pdf?.needsConfirmation?'Bu PDF sürümünü kabul et':r.confirmed?'Kaynak kimliği kabul edildi':'Kaynak kimliğini kabul et')}
       <details><summary>Kaynakça kayıt sınırlarını düzenle</summary><p>Birleştirme/ayırma, belge için doğrulama sonuçlarını ve seçilen düzeltmeleri sıfırlar. Aynı paragraftaki farklı kayıtları Word’de ayrı paragraflara ayırın.</p>${i<state.references.length-1?button('merge',r.id,'Sonraki kayıtla birleştir'):''}${r.paragraphs.length>1?button('split',r.id,'Her paragrafı ayrı kayıt yap'):''}</details>
       <label class="word-pdf">Yayının PDF’sini ekle <input type="file" accept=".pdf" data-reference="${esc(r.id)}" ${job.running?'disabled':''}></label>
@@ -229,7 +238,7 @@ function createWordWorkspace(prefix,mode) {
   $('applymany').addEventListener('click',()=>action('applymany',{ids:[...selected]}));
   $('search').addEventListener('input',()=>{query=$('search').value;render();});
   $('panel').addEventListener('toggle',event=>{const d=event.target;if(d.dataset.drawer){if(d.open)drawers.add(d.dataset.drawer);else drawers.delete(d.dataset.drawer);}},true);
-  $('panel').addEventListener('input',event=>{const field=event.target;if(field.dataset.wordParagraph)drafts.set('paragraph:'+field.dataset.wordParagraph,field.value);if(field.dataset.context)drafts.set('context:'+field.dataset.context,field.value);});
+  $('panel').addEventListener('input',event=>{const field=event.target;if(field.dataset.wordParagraph)drafts.set('paragraph:'+field.dataset.wordParagraph,field.value);if(field.dataset.context)drafts.set('context:'+field.dataset.context,field.value);if(field.dataset.referenceDraft)drafts.set('reference:'+field.dataset.referenceDraft,field.value);});
   $('panel').addEventListener('change',event=>{const field=event.target;
     if(field.dataset.patch){if(field.checked)selected.add(field.dataset.patch);else selected.delete(field.dataset.patch);$('applymany').disabled=busy||state.job.running||!selected.size;$('applymany').textContent=selected.size?`Seçilen ${selected.size} düzeltmeyi uygula`:'Seçilen düzeltmeleri uygula';}
     if(field.dataset.match)drafts.set('match:'+field.dataset.match,field.value);
@@ -252,6 +261,8 @@ function createWordWorkspace(prefix,mode) {
       else if(name==='saveparagraph'){const text=drafts.get('paragraph:'+id)??state.paragraphs.find(p=>p.id===id)?.text;action('paragraph',{paragraph:id,text,revision:state.revision||0});}
       else if(name==='context'){const text=Array.from($('citations').querySelectorAll('[data-context]')).find(el=>el.dataset.context===id)?.value;action(name,{citation:id,text});}
       else if(name==='confirmcheck')action('confirm',{reference:id,citation:b.dataset.citationId});
+      else if(name==='usesuggestion'){const text=drafts.get('reference:'+id)??state.references.find(r=>r.id===id)?.verification?.suggested;action('apply',{id:'bib-'+id,text}).then(()=>{if(state?.references.find(r=>r.id===id)?.accepted)drafts.delete('reference:'+id);});}
+      else if(name==='resetsuggestion'){drafts.delete('reference:'+id);render();}
       else action(name,name==='confirm'?{reference:id}:{id});return;}
     const referenceFilterButton=event.target.closest('[data-reference-filter]');if(referenceFilterButton){referenceFilter=referenceFilterButton.dataset.referenceFilter;render();$('reference-summary').querySelector(`[data-reference-filter="${referenceFilter}"]`)?.focus({preventScroll:true});return;}
     const nav=event.target.closest('[data-view]');if(nav){setView(nav.dataset.view);$('nav-'+view).focus({preventScroll:true});return;}

@@ -91,3 +91,20 @@ test('Durdur sonrası arayüzün otomatik içerik isteği işi yeniden başlatma
   assert.equal(Store.load(id).autoPaused,true,'duraklatma arşivde de korunur');
  }finally{if(oldKey===undefined)delete process.env.GROQ_API_KEY;else process.env.GROQ_API_KEY=oldKey;if(id&&S.sessions.has(id)){Store.remove(id);S.dispose(S.sessions.get(id));}await a.close();}
 });
+test('Öneriyi kullan, düzenlenmiş künyeyi Word’e yazar ve dergi italiklerini korur',async()=>{
+ const a=await api();let id;
+ try{
+  let s=await a.post('/api/word/upload',{name:'oneri.docx',mode:'word',...fixture});id=s.id;
+  const session=S.sessions.get(id),ref=session.references[0];
+  ref.verification={status:'verified',statusText:'Doğrulandı',matched:{title:'x'},suggested:'Yılmaz, A. (2020). Eski başlık. Eğitim Dergisi, 5(2), 1–10.',suggestedHtml:'Yılmaz, A. (2020). Eski başlık. <em>Eğitim Dergisi, 5</em>(2), 1–10.'};S.rebuild(session);
+  const text='Yılmaz, A. (2020). Kullanıcının düzelttiği başlık. Eğitim Dergisi, 5(2), 1–10.';
+  s=await a.post('/api/word/'+id+'/apply',{id:'bib-'+ref.id,text});
+  const applied=s.references.find(r=>r.id===ref.id);assert.equal(applied.accepted,true);assert.equal(applied.effectiveRaw,text);
+  const download=Buffer.from(await (await fetch(a.base+'/api/word/'+id+'/download')).arrayBuffer());
+  const xml=execFileSync(py,['-c','import sys,zipfile,io;print(zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())).read("word/document.xml").decode("utf-8"))'],{input:download,encoding:'utf8',env:{...process.env,PYTHONIOENCODING:'utf-8'}});
+  assert.match(xml,/Kullanıcının düzelttiği başlık/);
+  assert.match(xml,/<w:i ?\/>[\s\S]{0,200}?Eğitim Dergisi, 5</,'dergi adı ve cilt italik kalır');
+  s=await a.post('/api/word/'+id+'/undo',{id:'bib-'+ref.id});assert.equal(s.references.find(r=>r.id===ref.id).accepted,false);
+  await a.post('/api/word/'+id+'/apply',{id:'bib-'+ref.id,text:'   '},400);
+ }finally{if(id&&S.sessions.has(id)){Store.remove(id);S.dispose(S.sessions.get(id));}await a.close();}
+});
