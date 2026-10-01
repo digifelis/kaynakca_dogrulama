@@ -1,0 +1,8 @@
+.env
+node_modules/
+tests/tmp/
+
+data/
+
+# Kullanıcı makaleleri (kişisel belge, sürüm kontrolüne alınmaz)
+/*.docx

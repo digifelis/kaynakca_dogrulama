@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Kaynakçanızı akademik kayıtlarla karşılaştırın, düzeltmeleri görün ve APA 7 çıktısını kopyalayın." />
+    <title>Kaynakça Masası — Doğrula ve düzelt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <header class="topbar">
+      <a class="brand" href="#/kaynakca" aria-label="Kaynakça Masası ana sayfa">
+        <span class="brand-mark">K</span>
+        <span>Kaynakça Masası</span>
+      </a>
+      <div class="topbar-note"><span class="signal-dot"></span> Belgeleriniz bu bilgisayarda saklanır</div>
+    </header>
+
+    <main id="top" class="shell">
+      <nav class="page-navigation" aria-label="Ana sayfalar">
+        <a href="#/kaynakca" data-page-link="kaynakca">Kaynakça doğrulama</a>
+        <a href="#/word" data-page-link="word">Yetim Kaynak kontrolü</a>
+        <a href="#/icerik" data-page-link="icerik">İçerik kontrolü</a>
+      </nav>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">AKADEMİK KAYNAK KONTROLÜ</p>
+          <h1>Kaynakçanızı<br /><em>temiz bir kayda</em> dönüştürün.</h1>
+          <p class="hero-lede">Kaynaklarınızı yapıştırın. Kayıtları açık akademik dizinlerle karşılaştıralım, değişiklikleri görünür kılalım ve APA 7 listenizi hazırlayalım.</p>
+        </div>
+        <div class="hero-stamp" aria-hidden="true">
+          <span class="stamp-ring">01</span>
+          <span class="stamp-text">kaydı<br />incele</span>
+        </div>
+      </section>
+
+      <div id="page-word" class="app-page" hidden>
+      <section id="word-workspace" class="workbench word-workbench" aria-labelledby="word-title">
+        <div class="section-kicker"><span>WORD</span><span>Makalenizi denetleyin</span></div>
+        <h2 id="word-title">Word makalesi ve atıf kontrolü</h2>
+        <p>Kaynakçayı çıkarın; metin içi atıfları, yazar ve yıl bilgilerini karşılaştırın. Seçtiğiniz düzeltmelerle Word dosyanızı indirin.</p>
+        <section class="document-library" aria-label="Belgelerim"><h3>Belgelerim</h3><p>Bu sayfaya yüklediğiniz belgeler ve kaynak PDF’leri burada saklanır.</p><div id="word-library"></div></section>
+        <label class="word-upload">Yetim kaynak kontrolü için Word makalesi (.docx, en fazla 20 MB)
+          <input id="word-upload" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+        </label>
+        <p class="provider-note">Türkçe/İngilizce APA yazar–yıl atıfları desteklenir. Word ve PDF dosyaları bu bilgisayarda saklanır; yalnız Belgeyi sil ile kaldırılır. Kaynak alan kodları ve izlenen değişiklikler yalnız raporlanır.</p>
+        <p id="word-message" role="status" aria-live="polite"></p>
+        <div id="word-panel" class="hidden">
+          <details id="word-boundaries"><summary>Kaynakça bölümünü ve belgeyi incele</summary>
+            <p>İlk ve son kaynakça paragrafını seçin; bölüm başlığını seçime dahil etmeyin. Bölümü değiştirmek seçilmiş düzeltmeleri sıfırlar.</p>
+            <div class="word-range"><label>Başlangıç <select id="word-start"></select></label><label>Bitiş <select id="word-end"></select></label>
+              <button id="word-range" class="copy-button" type="button">Bölümü kullan</button></div>
+            <div id="word-preview" class="word-preview"></div>
+          </details>
+          <div class="word-actions">
+            <button id="word-verify" class="copy-button" type="button">Kaynakları doğrula</button>
+            <button id="word-content" class="copy-button" type="button">İçerik kontrolünü başlat</button>
+            <button id="word-stop" class="text-button" type="button">Durdur</button>
+            <button id="word-download" class="copy-button" type="button">Nihai Word dosyasını indir</button>
+            <button id="word-report" class="text-button" type="button">Raporu indir</button>
+            <button id="word-delete" class="text-button" type="button">Belgeyi sil</button>
+          </div>
+          <p class="provider-note content-disclosure">İçerik kontrolü, atıf cümlesini ve önceki üç cümleyi ilgili yayın pasajlarıyla Groq’a gönderir. Tam metin yoksa özetle sınırlı inceleme yapılır; özet de yoksa PDF yüklemeniz istenir. Model kararları kanıtla birlikte incelenmelidir; içerik cümleleri otomatik değiştirilmez.</p>
+          <details id="word-query-monitor" class="query-monitor hidden" aria-labelledby="word-query-monitor-title"><summary id="word-query-monitor-title"><span class="query-live-dot" aria-hidden="true"></span>Canlı sorgu akışı</summary><header class="query-monitor-header"><p id="word-query-monitor-status">Sorgular başladığında burada görünecek.</p><button type="button" class="text-button" data-clear-debug>Akışı temizle</button></header><div id="word-query-monitor-summary" class="query-monitor-summary"></div><div id="word-query-monitor-log" class="query-monitor-log" role="log" aria-live="polite"></div></details>
+          <a class="page-next word-only" href="#/icerik">Bağımsız içerik kontrolünü aç →</a>
+          <nav id="word-summary" class="word-navigation" aria-label="Belge inceleme listeleri"></nav>
+          <div id="word-applied"></div>
+          <div class="word-list-tools">
+            <label class="word-search">Bu listede ara<input id="word-search" type="search" placeholder="Yazar, yıl veya kaynak adı" autocomplete="off"></label>
+            <button id="word-applymany" class="copy-button" type="button">Seçilen düzeltmeleri uygula</button>
+          </div>
+          <section id="word-view-issues" class="word-review-section" aria-labelledby="word-issues-title">
+            <header class="word-list-heading"><h3 id="word-issues-title">Atıf sorunları</h3><p>Yazar, yıl, belirsiz eşleşme ve yinelenen kayıtları inceleyin.</p></header>
+            <div id="word-findings" class="result-list"></div>
+          </section>
+          <section id="word-view-orphan-citations" class="word-review-section hidden" aria-labelledby="word-orphan-citations-title">
+            <header class="word-list-heading"><h3 id="word-orphan-citations-title">Yetim metin içi atıflar</h3><p>Metinde bulunan, kaynakçada karşılığı belirlenemeyen atıflar. İlgili paragrafı açıp kaynağı eşleştirin.</p></header>
+            <div id="word-orphan-citations" class="result-list"></div>
+          </section>
+          <section id="word-view-orphan-references" class="word-review-section hidden" aria-labelledby="word-orphan-references-title">
+            <header class="word-list-heading"><h3 id="word-orphan-references-title">Yetim kaynakça</h3><p>Taranan metinde atıfı bulunamayan kaynakça kayıtları. Silmeden önce metinde farklı adla kullanılıp kullanılmadığını inceleyin.</p></header>
+            <div id="word-orphan-references" class="result-list"></div>
+          </section>
+          <section id="word-view-evidence" class="word-review-section hidden" aria-labelledby="word-evidence-title">
+            <header class="word-list-heading"><h3 id="word-evidence-title">Atıflar ve içerik kanıtları</h3><p>Her atfın cümlesi, bağlamı ve yayın kanıtı burada gösterilir.</p></header>
+            <div id="word-evidence-filters" class="word-evidence-filters" aria-label="İçerik sonucu filtreleri"></div>
+            <div id="word-citations" class="result-list"></div>
+          </section>
+          <dialog id="word-inspection" class="word-inspection" aria-labelledby="word-inspection-title">
+            <header><h3 id="word-inspection-title">Atıf eşleşmesini düzenle</h3><button type="button" id="word-inspection-close" class="copy-button">Kapat</button></header>
+            <div id="word-inspection-body"></div>
+          </dialog>
+          <section id="word-view-references" class="word-review-section hidden" aria-labelledby="word-references-title">
+            <header class="word-list-heading"><h3 id="word-references-title">Kaynakça kayıtları</h3><p>Yayın kimliğini doğrulayın, önerilen künyeyi inceleyin veya yayın PDF’sini ekleyin.</p></header>
+            <div id="word-reference-summary" class="summary-stats word-reference-summary" aria-label="Kaynakça kontrol özeti"></div>
+            <div id="word-references" class="result-list"></div>
+          </section>
+        </div>
+      </section>
+      </div>
+      <div id="page-icerik" class="app-page" hidden>
+        <p class="content-intro">Bu sayfanın dosyası ve işlemleri Yetim Kaynak kontrolünden bağımsızdır. Her sayfaya kendi Word dosyanızı yükleyebilirsiniz.</p>
+      <section id="content-workspace" class="workbench word-workbench" aria-labelledby="content-title">
+        <div class="section-kicker"><span>WORD</span><span>Yayın kanıtlarını inceleyin</span></div>
+        <h2 id="content-title">İçerik kontrolü için Word yükleyin</h2>
+        <p>Bu sayfaya ayrı bir Word dosyası yükleyin. Kaynakları doğrulayın, eşleşmeleri inceleyin ve içerik kontrolünü başlatın.</p>
+        <section class="document-library" aria-label="Belgelerim"><h3>Belgelerim</h3><p>Bu sayfaya yüklediğiniz belgeler ve kaynak PDF’leri burada saklanır.</p><div id="content-library"></div></section>
+        <label class="word-upload">İçerik kontrolü için Word makalesi (.docx, en fazla 20 MB)
+          <fieldset class="check-options"><legend>Yapılacak denetimler</legend><label><input id="content-check-references" type="checkbox" checked> Kaynakça doğrulama</label><label><input id="content-check-citations" type="checkbox" checked> Metin içi atıf kontrolü</label><label><input id="content-check-llm" type="checkbox" checked> LLM içerik kontrolü</label></fieldset>
+          <input id="content-upload" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+        </label>
+        <p class="provider-note">Türkçe/İngilizce APA yazar–yıl atıfları desteklenir. Word ve PDF dosyaları bu bilgisayarda saklanır; yalnız Belgeyi sil ile kaldırılır. Kaynak alan kodları ve izlenen değişiklikler yalnız raporlanır.</p>
+        <p id="content-message" role="status" aria-live="polite"></p>
+        <div id="content-panel" class="hidden">
+          <details id="content-boundaries"><summary>Kaynakça bölümünü ve belgeyi incele</summary>
+            <p>İlk ve son kaynakça paragrafını seçin; bölüm başlığını seçime dahil etmeyin. Bölümü değiştirmek seçilmiş düzeltmeleri sıfırlar.</p>
+            <div class="word-range"><label>Başlangıç <select id="content-start"></select></label><label>Bitiş <select id="content-end"></select></label>
+              <button id="content-range" class="copy-button" type="button">Bölümü kullan</button></div>
+            <div id="content-preview" class="word-preview"></div>
+          </details>
+          <div class="word-actions">
+            <button id="content-runchecks" class="copy-button" type="button">Seçilen denetimleri başlat</button>
+            <button hidden id="content-verify" class="copy-button" type="button">Kaynakları doğrula</button>
+            <button hidden id="content-content" class="copy-button" type="button">Atıfları kontrol et</button>
+            <button id="content-stop" class="text-button" type="button">Durdur</button>
+            <button id="content-download" class="copy-button" type="button">Nihai Word dosyasını indir</button>
+            <button id="content-report" class="text-button" type="button">Raporu indir</button>
+            <button id="content-delete" class="text-button" type="button">Belgeyi sil</button>
+          </div>
+          <p class="provider-note content-disclosure">İçerik kontrolü, atıf cümlesini ve önceki üç cümleyi ilgili yayın pasajlarıyla Groq’a gönderir. Tam metin yoksa özetle sınırlı inceleme yapılır; özet de yoksa PDF yüklemeniz istenir. Model kararları kanıtla birlikte incelenmelidir; içerik cümleleri otomatik değiştirilmez.</p>
+          <section id="content-progress" class="content-progress" aria-label="Denetim ilerlemesi"></section>
+          <details id="content-query-monitor" class="query-monitor hidden" aria-labelledby="content-query-monitor-title"><summary id="content-query-monitor-title"><span class="query-live-dot" aria-hidden="true"></span>Canlı sorgu akışı</summary><header class="query-monitor-header"><p id="content-query-monitor-status">Sorgular başladığında burada görünecek.</p><button type="button" class="text-button" data-clear-debug>Akışı temizle</button></header><div id="content-query-monitor-summary" class="query-monitor-summary"></div><div id="content-query-monitor-log" class="query-monitor-log" role="log" aria-live="polite"></div></details>
+          <div class="content-review-layout"><div class="content-review-results">
+          <nav id="content-summary" class="word-navigation" aria-label="Belge inceleme listeleri"></nav>
+          <div id="content-applied"></div>
+          <div class="word-list-tools">
+            <label class="word-search">Bu listede ara<input id="content-search" type="search" placeholder="Yazar, yıl veya kaynak adı" autocomplete="off"></label>
+            <button id="content-applymany" class="copy-button" type="button">Seçilen düzeltmeleri uygula</button>
+          </div>
+          <section id="content-view-issues" class="word-review-section" aria-labelledby="content-issues-title">
+            <header class="word-list-heading"><h3 id="content-issues-title">Atıf sorunları</h3><p>Yazar, yıl, belirsiz eşleşme ve yinelenen kayıtları inceleyin.</p></header>
+            <div id="content-findings" class="result-list"></div>
+          </section>
+          <section id="content-view-orphan-citations" class="word-review-section hidden" aria-labelledby="content-orphan-citations-title">
+            <header class="word-list-heading"><h3 id="content-orphan-citations-title">Yetim metin içi atıflar</h3><p>Metinde bulunan, kaynakçada karşılığı belirlenemeyen atıflar. İlgili paragrafı açıp kaynağı eşleştirin.</p></header>
+            <div id="content-orphan-citations" class="result-list"></div>
+          </section>
+          <section id="content-view-orphan-references" class="word-review-section hidden" aria-labelledby="content-orphan-references-title">
+            <header class="word-list-heading"><h3 id="content-orphan-references-title">Yetim kaynakça</h3><p>Taranan metinde atıfı bulunamayan kaynakça kayıtları. Silmeden önce metinde farklı adla kullanılıp kullanılmadığını inceleyin.</p></header>
+            <div id="content-orphan-references" class="result-list"></div>
+          </section>
+          <section id="content-view-evidence" class="word-review-section hidden" aria-labelledby="content-evidence-title">
+            <header class="word-list-heading"><h3 id="content-evidence-title">Atıflar ve içerik kanıtları</h3><p>Her atfın cümlesi, bağlamı ve yayın kanıtı burada gösterilir.</p></header>
+            <div id="content-evidence-filters" class="word-evidence-filters" aria-label="İçerik sonucu filtreleri"></div>
+            <div id="content-citations" class="result-list"></div>
+          </section>
+          <section id="content-view-references" class="word-review-section hidden" aria-labelledby="content-references-title">
+            <header class="word-list-heading"><h3 id="content-references-title">Kaynakça kayıtları</h3><p>Yayın kimliğini doğrulayın, önerilen künyeyi inceleyin veya yayın PDF’sini ekleyin.</p></header>
+            <div id="content-reference-summary" class="summary-stats word-reference-summary" aria-label="Kaynakça kontrol özeti"></div>
+            <div id="content-references" class="result-list"></div>
+          </section>
+          </div></div>
+        </div>
+      </section>
+      </div>
+      <div id="page-kaynakca" class="app-page">
+      <section class="workbench" aria-labelledby="input-title">
+        <div class="section-kicker"><span>01</span><span>Kaynakçayı bırakın</span></div>
+        <div class="input-grid">
+          <div class="input-panel">
+            <div class="panel-heading">
+              <div>
+                <h2 id="input-title">Kaynak listeniz</h2>
+                <p>Her kaydı ayrı satıra yazın. Numaralı listeler de olur.</p>
+              </div>
+              <span id="record-count" class="count-badge">0 kayıt</span>
+            </div>
+            <textarea id="reference-input" spellcheck="false" placeholder="Örnek:&#10;&#10;Vaswani, A., Shazeer, N., Parmar, N., et al. (2017). Attention is all you need. Advances in Neural Information Processing Systems, 30. https://doi.org/10.48550/arXiv.1706.03762&#10;&#10;Devlin, J., Chang, M.-W., Lee, K., &amp; Toutanova, K. (2019). BERT: Pre-training of deep bidirectional transformers for language understanding. NAACL."></textarea>
+            <div class="input-footer">
+              <span id="input-hint">Başlamak için kaynakçanızı yapıştırın.</span>
+              <button id="clear-button" class="text-button" type="button">Temizle</button>
+            </div>
+          </div>
+          <aside class="control-panel">
+            <div class="control-label">Çıktı biçimi</div>
+            <label class="select-wrap">
+              <span class="sr-only">Kaynakça biçimi</span>
+              <select id="style-select">
+                <option value="apa">APA 7</option>
+                <option value="vancouver">Vancouver (yakında)</option>
+                <option value="ieee">IEEE (yakında)</option>
+              </select>
+            </label>
+            <button id="verify-button" class="primary-button" type="button">
+              <span class="button-icon">↗</span> Doğrula ve düzelt
+            </button>
+            <p class="control-note">Akademik kayıtlar dizinlerde, web kaynakları verilen bağlantıda kontrol edilir. Web künyesindeki yazar, başlık ve tarih farklarını inceleyebilirsiniz. Web kotasında kayıt ertelenir; özgün kaynak korunur.</p>
+          </aside>
+        </div>
+        <div class="examples-row">
+          <span>Örnekle dene</span>
+          <button class="example-button" data-example="article" type="button">Makale</button>
+          <button class="example-button" data-example="mixed" type="button">Karışık liste</button>
+          <button class="example-button" data-example="problem" type="button">Hatalı DOI</button>
+          <button class="example-button" data-example="web" type="button">Web kaynakları</button>
+        </div>
+        <details class="provider-details">
+          <summary>Doğrulama kaynakları ve erişim durumu</summary>
+          <p class="provider-note">Güçlü eşleşme bulunamazsa yayın türüne uygun ek dizinler aranır. Her sonuçta gerçekten sorgulanan kaynaklar gösterilir. Dış dizinlere arama için başlık, yazar veya DOI iletilir.</p>
+          <div id="provider-catalog" class="provider-catalog"></div>
+          <p id="provider-access-note" class="provider-note" role="status"></p>
+        </details>
+      </section>
+
+      <section id="progress-section" class="progress-section hidden" aria-live="polite">
+        <div class="progress-topline"><span id="progress-label">Kayıtlar taranıyor</span><span id="progress-value">0 / 0</span></div>
+        <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+        <button id="stop-button" class="text-button" type="button">Durdur</button>
+      </section>
+
+      <section id="results-section" class="results-section hidden" aria-labelledby="results-title">
+        <div class="section-kicker"><span>02</span><span>Sonuçları inceleyin</span></div>
+        <div class="results-heading">
+          <div>
+            <h2 id="results-title">Kontrol özeti</h2>
+            <p id="results-subtitle">Her kayıt için eşleşme ve değişiklikleri göreceksiniz.</p>
+          </div>
+          <div class="summary-stats" id="summary-stats"></div>
+        </div>
+        <div id="result-list" class="result-list"></div>
+      </section>
+
+      <section id="output-section" class="output-section hidden" aria-labelledby="output-title">
+        <div class="section-kicker"><span>03</span><span>Çıktıyı alın</span></div>
+        <div class="output-card">
+          <div class="output-heading">
+            <div>
+              <h2 id="output-title">Düzeltilmiş kaynakça</h2>
+              <p>Doğrulanmış kayıtlara APA 7 temel biçim kuralları uygulandı. İnceleme önerilerini Çıktıya uygula düğmesiyle seçebilirsiniz. Seçilmemiş belirsiz kayıtlar özgün kalır; özel adların yazımını kontrol edin.</p>
+            </div>
+            <button id="copy-button" class="copy-button" type="button"><span>□</span> Tümünü kopyala</button>
+          </div>
+          <div id="output-text" class="output-text"></div>
+          <div id="copy-status" class="copy-status" role="status"></div>
+        </div>
+      </section>
+
+      </div>
+      <footer class="footer">
+        <span>Kaynakça Masası / açık kayıtlarla çalışan kişisel araç</span>
+        <span>Akademik dizinler, kitap katalogları ve web kaynakları</span>
+      </footer>
+    </main>
+    <script src="providers.js" defer></script>
+    <script src="web-reference.js" defer></script>
+    <script src="reference-engine.js" defer></script>
+    <script src="app.js" defer></script>
+    <script src="word-app.js" defer></script>
+    <script src="pages.js" defer></script>
+  </body>
+</html>
