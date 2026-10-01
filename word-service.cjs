@@ -149,19 +149,28 @@ async function startContent(s,scope={}){
   s.autoContentScope=scope;const controller=new AbortController();s.controller=controller;const signal=controller.signal;
   s.job={running:true,kind:'content',message:'Yayın metinleri ediniliyor',completed:0,total:scopedCitations(s,scope).length};
   addDebugEvent(s,{scope:'groq',kind:'start',provider:'Groq',detail:`${s.job.total} atıf sıraya alındı`});persist(s);
+  const done=c=>s.content[c.id]?.analysisVersion===2&&s.content[c.id].verdict!=='unassessable';
+  const ready=ref=>ref&&(ref.verification?.status==='verified'||ref.accepted||s.manualConfirmed.has(ref.id)||Content.referenceUrl(ref));
+  // One acquisition per reference and run; the next publication downloads while the LLM evaluates the current one.
+  const fetches=new Map();
+  const acquire=(ref,c)=>{if(!fetches.has(ref.id)){const pending=Content.fullText(ref,python,signal,{onDebug:event=>{addDebugEvent(s,{...event,citation:c.location,record:ref.raw});persistSoon(s);}}).then(text=>{
+    const expectedTitle=Content.referenceTitle(ref);if(text.title&&expectedTitle&&Engine.titleScore(expectedTitle,text.title)<.65)throw Error('Erişilen yayının başlığı kaynakla uyuşmuyor.');return text;});
+    pending.catch(()=>{});fetches.set(ref.id,pending);}return fetches.get(ref.id);};
+  const prefetch=(list,from)=>{for(let j=from;j<list.length;j++){const next=list[j];if(done(next)||(next.issue&&!/^Korunan alan|^Alan kodu\/korunan öğe/.test(next.issue)))continue;const ref=s.effectiveReferences.find(r=>r.id===next.reference);
+    if(!ready(ref)||s.texts[ref.id]||fetches.has(ref.id))continue;acquire(ref,next);return;}};
   const run=async()=>{
-    for(const c of scopedCitations(s,scope)){
+    const list=scopedCitations(s,scope);
+    for(let i=0;i<list.length;i++){const c=list[i];
       signal.throwIfAborted();
-      if(s.content[c.id]?.analysisVersion===2&&s.content[c.id].verdict!=='unassessable'){s.job.completed++;continue;}
+      if(done(c)){s.job.completed++;continue;}
       const ref=s.effectiveReferences.find(r=>r.id===c.reference);
       try{
         if(!ref||(c.issue&&!/^Korunan alan|^Alan kodu\/korunan öğe/.test(c.issue)))throw Error('Önce atıf eşleşmesini/uyuşmazlığını çözün.');
-        if(ref.verification?.status!=='verified'&&!ref.accepted&&!s.manualConfirmed.has(ref.id)&&!Content.referenceUrl(ref))throw Error('Kaynak kimliği doğrulanmadı; eşleşmeyi inceleyip kabul edin.');
+        if(!ready(ref))throw Error('Kaynak kimliği doğrulanmadı; eşleşmeyi inceleyip kabul edin.');
         let text=s.texts[ref.id];
-        if(!text){s.job.message=`${c.location}: tam metin aranıyor`;text=await Content.fullText(ref,python,signal,{onDebug:event=>{addDebugEvent(s,{...event,citation:c.location,record:ref.raw});persistSoon(s);}});
-          const expectedTitle=Content.referenceTitle(ref);if(text.title&&expectedTitle&&Engine.titleScore(expectedTitle,text.title)<.65)throw Error('Erişilen yayının başlığı kaynakla uyuşmuyor.');s.texts[ref.id]=text;}
+        if(!text){s.job.message=`${c.location}: tam metin aranıyor`;text=await acquire(ref,c);s.texts[ref.id]=text;}
         if(text.needsConfirmation){const notice=Content.preprintNotice(text);throw Error('PDF’nin yayın kimliğini ve sürümünü önizleyip kabul edin.'+(notice?' PDF sürüm beyanı: “'+notice+'”':''));}
-        s.job.message=`${c.location}: LLM ile karşılaştırılıyor`;
+        s.job.message=`${c.location}: LLM ile karşılaştırılıyor`;prefetch(list,i+1);
         s.content[c.id]=await Content.evaluate(c,text,signal,at=>{s.job.message='LLM hız/kota beklemesi; otomatik devam edilecek';s.job.retryAt=at;},event=>{addDebugEvent(s,{...event,citation:c.location,record:c.sentence});persistSoon(s);});
       }catch(e){if(signal.aborted)throw e;s.content[c.id]={verdict:'unassessable',explanation:e.message,claims:[]};}
       s.job.completed++;delete s.job.retryAt;rebuild(s);persist(s);
