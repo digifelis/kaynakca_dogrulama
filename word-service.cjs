@@ -1,6 +1,6 @@
 const {spawn}=require('node:child_process');
 const {Worker}=require('node:worker_threads');
-const {randomUUID}=require('node:crypto');
+const {randomUUID,createHash}=require('node:crypto');
 const path=require('node:path');
 const fs=require('node:fs');
 const os=require('node:os');
@@ -219,7 +219,9 @@ async function handle(req,res,url,json){
     if(url.pathname==='/api/word/documents'&&req.method==='GET'){json(res,200,{documents:Store.list().map(d=>sessions.has(d.id)?{...d,job:sessions.get(d.id).job}:{...d,job:{...d.job,running:false}})});return true;}
     const match=url.pathname.match(/^\/api\/word\/([a-f0-9-]{36})(?:\/(\w+))?$/);if(!match)return json(res,404,{error:'İşlem bulunamadı.'}),true;
     let s=sessions.get(match[1]);if(!s){s=Store.load(match[1]);if(s){rebuild(s);sessions.set(s.id,s);}}if(!s)return json(res,404,{error:'Belge oturumu sona erdi; yeniden yükleyin.'}),true;s.touched=Date.now();const action=match[2]||'state';
-    if(req.method==='GET'&&action==='state'){json(res,200,snapshot(s));return true;}
+    if(req.method==='GET'&&action==='state'){const body=JSON.stringify(snapshot(s)),tag='"'+createHash('sha1').update(body).digest('base64url')+'"';
+      if(req.headers['if-none-match']===tag){res.writeHead(304,{ETag:tag,'Cache-Control':'no-cache'});res.end();return true;}
+      res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-cache','X-Content-Type-Options':'nosniff',ETag:tag});res.end(body);return true;}
     if(req.method==='DELETE'){if(s.mutation)throw Error('Kayıt sürüyor; bitmesini bekleyin.');s.deleted=true;dispose(s);Store.remove(s.id);json(res,200,{deleted:true});return true;}
     if(req.method==='GET'&&action==='original'){res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','Content-Disposition':'attachment; filename=original.docx'});res.end(s.originalData||s.data);return true;}
     if(req.method==='GET'&&action==='pdfdownload'){const pdf=(s.pdfFiles||[]).find(p=>p.id===url.searchParams.get('file'));if(!pdf)throw Error('PDF bulunamadı.');res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename=source.pdf'});res.end(Buffer.from(pdf.data,'base64'));return true;}

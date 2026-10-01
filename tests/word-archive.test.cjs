@@ -71,3 +71,13 @@ print(json.dumps({'data':base64.b64encode(b.getvalue()).decode()}))`;
   for(let i=0;i<30&&evaluated<2;i++)await new Promise(r=>setTimeout(r,10));assert.equal(evaluated,2);
  }finally{if(id&&S.sessions.has(id))S.dispose(S.sessions.get(id));C.fullText=oldText;C.evaluate=oldEvaluate;if(oldKey===undefined)delete process.env.GROQ_API_KEY;else process.env.GROQ_API_KEY=oldKey;await new Promise(r=>server.close(r));}
 });
+test('state polling revalidates with ETag and returns 304 while the document is unchanged',async()=>{
+ const a=await api();let id;
+ try{
+  const s=await a.post('/api/word/upload',{name:'etag.docx',mode:'word',...fixture});id=s.id;
+  const first=await fetch(a.base+'/api/word/'+id);const tag=first.headers.get('etag');assert.equal(first.status,200);assert.ok(tag);await first.json();
+  const same=await fetch(a.base+'/api/word/'+id,{headers:{'If-None-Match':tag}});assert.equal(same.status,304);assert.equal(await same.text(),'');
+  S.sessions.get(id).warnings.push('changed');
+  const changed=await fetch(a.base+'/api/word/'+id,{headers:{'If-None-Match':tag}});assert.equal(changed.status,200);assert.notEqual(changed.headers.get('etag'),tag);await changed.json();
+ }finally{if(id&&S.sessions.has(id)){Store.remove(id);S.dispose(S.sessions.get(id));}await a.close();}
+});

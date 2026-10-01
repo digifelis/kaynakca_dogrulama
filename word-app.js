@@ -1,6 +1,6 @@
 function createWordWorkspace(prefix,mode) {
   const $=id=>document.getElementById(prefix+'-'+id);
-  let state=null,poll=null,busy=false,autoStarting=false,filter='all',view='issues',query='',debugHiddenBefore=0,stateEpoch=0;
+  let state=null,stateTag=null,poll=null,busy=false,autoStarting=false,filter='all',view='issues',query='',debugHiddenBefore=0,stateEpoch=0;
   let inspectedCitation=null;
   const selected=new Set(),drawers=new Set(),drafts=new Map();
   const isContent=mode==='content';
@@ -74,15 +74,19 @@ function createWordWorkspace(prefix,mode) {
   async function encoded(file){if(file.size>20*1024*1024)throw Error('Dosya en fazla 20 MB olabilir.');const bytes=new Uint8Array(await file.arrayBuffer());let value='';for(let i=0;i<bytes.length;i+=32768)value+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(value);}
   function notify(message){const messageElement=$('message');if(messageElement)messageElement.textContent=message;}
   async function api(action,data={},method='POST'){
-    const response=await fetch('/api/word/'+(action==='upload'?'upload':state.id+(action?'/'+action:'')),{method,headers:{'Content-Type':'application/json','X-Word-Request':'1'},...(method==='GET'||method==='DELETE'?{}:{body:JSON.stringify(data)})});
-    const result=await response.json();if(!response.ok)throw Error(result.error||'İşlem tamamlanamadı.');return result;
+    // State polls revalidate with ETag; an unchanged document returns 304 and skips the re-render.
+    const statePoll=method==='GET'&&!action,cached=statePoll&&stateTag?.id===state?.id?stateTag.value:'';if(!statePoll)stateTag=null;
+    const response=await fetch('/api/word/'+(action==='upload'?'upload':state.id+(action?'/'+action:'')),{method,headers:{'Content-Type':'application/json','X-Word-Request':'1',...(cached?{'If-None-Match':cached}:{})},...(method==='GET'||method==='DELETE'?{}:{body:JSON.stringify(data)})});
+    if(statePoll&&response.status===304)return null;
+    const result=await response.json();if(!response.ok)throw Error(result.error||'İşlem tamamlanamadı.');
+    if(statePoll){const tag=response.headers?.get?.('ETag');stateTag=tag?{id:result.id,value:tag}:null;}return result;
   }
   function pendingMatchedCitations(){return isContent&&state?.groqConfigured&&state?.range?.start>=0?(state.citations||[]).filter(c=>c.reference&&!c.issue&&!c.content):[];}
   function maybeAutoContent(){
     if(state?.checks&&(state.checksStarted!==true||!state.checks.llm)||busy||autoStarting||state?.job?.running||state?.referenceJob?.running||!pendingMatchedCitations().length)return;
     autoStarting=true;setTimeout(()=>action('check',{matchedOnly:true,pendingOnly:true}).finally(()=>{autoStarting=false;}),0);
   }
-  function schedule(){clearTimeout(poll);if(state?.job.running||state?.referenceJob?.running){const id=state.id;poll=setTimeout(async()=>{try{const next=await api('',{},'GET');if(state?.id!==id)return;state=next;render();schedule();if(!state.job.running&&!state.referenceJob?.running){library();maybeAutoContent();}}catch(e){if(state?.id===id)notify(e.message);}},1500);}else maybeAutoContent();}
+  function schedule(){clearTimeout(poll);if(state?.job.running||state?.referenceJob?.running){const id=state.id;poll=setTimeout(async()=>{try{const next=await api('',{},'GET');if(state?.id!==id)return;if(next){state=next;render();}schedule();if(!state.job.running&&!state.referenceJob?.running){library();maybeAutoContent();}}catch(e){if(state?.id===id)notify(e.message);}},1500);}else maybeAutoContent();}
   function button(action,id,label){return `<button class="copy-button" type="button" data-action="${action}" data-id="${esc(id)}" ${busy||state.job.running?'disabled':''}>${label}</button>`;}
   function location(c){return `<a class="word-location" href="#${prefix}-p-${esc(c.paragraph)}" data-show="${esc(c.paragraph)}">${esc(c.location||'Belgede göster')}</a>`;}
   function groupFindings(){return {
