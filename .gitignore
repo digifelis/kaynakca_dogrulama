@@ -12,3 +12,4 @@ __pycache__/
 keys/
 # Servislerin kendi API anahtarları
 services/*/.env
+.env.yedek

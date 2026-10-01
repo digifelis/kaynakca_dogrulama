@@ -8,17 +8,7 @@ const Analysis=require('./word-analysis.cjs');
 const Content=require('./word-content.cjs');
 const Store=require('./word-store.cjs');
 const Engine=require('./reference-engine.js');
-const bundled=path.join(os.homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe');
-const pythonPath=()=>process.env.WORD_PYTHON||(fs.existsSync(bundled)?bundled:'python');
-function python(request){return new Promise((resolve,reject)=>{
-  const child=spawn(pythonPath(),[path.join(__dirname,'scripts/word-package.py')],{windowsHide:true,stdio:['pipe','pipe','pipe']});
-  let data='',size=0;const timer=setTimeout(()=>child.kill(),45000);
-  child.stdout.on('data',chunk=>{size+=chunk.length;if(size>32*1024*1024){child.kill();return;}data+=chunk.toString();});
-  child.stderr.resume();child.stdin.on('error',()=>{});
-  child.on('error',()=>{clearTimeout(timer);reject(Error('Word işleme için Python çalıştırılamadı.'));});
-  child.on('close',()=>{clearTimeout(timer);try{const output=JSON.parse(data);if(output.error)reject(Error(output.error));else resolve(output);}catch{reject(Error('Dosya işleme tamamlanamadı; boyut/biçim sınırlarını kontrol edin.'));}});
-  child.stdin.end(JSON.stringify(request));
-});}
+const {python}=require('./lib/python.cjs');
 async function body(req){let size=0;const parts=[];for await(const chunk of req){size+=chunk.length;if(size>29*1024*1024)throw Error('Dosya en fazla 20 MB olabilir.');parts.push(chunk);}try{return JSON.parse(Buffer.concat(parts));}catch{throw Error('Geçersiz istek.');}}
 function decode(data){if(typeof data!=='string'||data.length>28*1024*1024||! /^[A-Za-z0-9+/]*={0,2}$/.test(data))throw Error('Geçersiz dosya verisi.');const buffer=Buffer.from(data,'base64');if(buffer.length>20*1024*1024)throw Error('Dosya en fazla 20 MB olabilir.');return buffer;}
 function spans(html,text){
@@ -165,6 +155,13 @@ function scopeNeedsVerification(s,scope={}){
     return ref.verification?.status!=='verified'&&!ref.accepted&&!s.manualConfirmed.has(ref.id)&&!directWeb;
   });
 }
+// Publication full texts are fetched by the verification service (with its own keys and IP) when a queue is configured.
+function fullText(ref,signal,options){
+  const queue=Backend.queue();
+  if(!queue)return Content.fullText(ref,python,signal,options);
+  const reference={raw:ref.raw,effectiveRaw:ref.effectiveRaw,title:ref.title,verification:{matched:ref.verification?.matched||null}};
+  return queue.run('verify',{kind:'fulltext',reference},{signal,leaseMs:120000,maxAttempts:2,onEvent:({seq,...event})=>options.onDebug(event)});
+}
 async function startContent(s,scope={}){
   if(s.job.running)throw Error('Önce devam eden işlemi durdurun.');
   if(!llmConfigured())throw Error(Content.llmMissing());
@@ -175,7 +172,7 @@ async function startContent(s,scope={}){
   const ready=ref=>ref&&(ref.verification?.status==='verified'||ref.accepted||s.manualConfirmed.has(ref.id)||Content.referenceUrl(ref));
   // One acquisition per reference and run; the next publication downloads while the LLM evaluates the current one.
   const fetches=new Map();
-  const acquire=(ref,c)=>{if(!fetches.has(ref.id)){const pending=Content.fullText(ref,python,signal,{onDebug:event=>{addDebugEvent(s,{...event,citation:c.location,record:ref.raw});persistSoon(s);}}).then(text=>{
+  const acquire=(ref,c)=>{if(!fetches.has(ref.id)){const pending=fullText(ref,signal,{onDebug:event=>{addDebugEvent(s,{...event,citation:c.location,record:ref.raw});persistSoon(s);}}).then(text=>{
     const expectedTitle=Content.referenceTitle(ref);if(text.title&&expectedTitle&&Engine.titleScore(expectedTitle,text.title)<.65)throw Error('Erişilen yayının başlığı kaynakla uyuşmuyor.');return text;});
     pending.catch(()=>{});fetches.set(ref.id,pending);}return fetches.get(ref.id);};
   const prefetch=(list,from)=>{for(let j=from;j<list.length;j++){const next=list[j];if(done(next)||(next.issue&&!/^Korunan alan|^Alan kodu\/korunan öğe/.test(next.issue)))continue;const ref=s.effectiveReferences.find(r=>r.id===next.reference);

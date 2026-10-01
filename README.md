@@ -23,7 +23,7 @@ tarayıcı ──> web (server.cjs) ──iş──> kuyruk (services/queue) <�
 ```
 
 - **Kuyruk** (`services/queue/server.cjs`, varsayılan port 4180): bağımlılıksız Node servisi. İki kuyruk vardır: `verify` (kaynak doğrulama) ve `llm` (atıf–kaynak değerlendirmesi, arama terimi üretimi, web kaynağı alan tamamlama). Boştaki servis işi long-poll ile çeker; iş her zaman boşta bekleyen servise gider. Servis düşerse iş, kiralama süresi dolunca başka servise verilir. Bekleyen işler `QUEUE_DATA_DIR` altındaki günlükte saklanır, kuyruk yeniden başlasa da kaybolmaz. Durdur, kuyruktaki işi iptal eder ve çalışan servisi durdurur.
-- **Doğrulama servisi** (`services/verify`): kaynak motorunu çalıştırır. Dizin anahtarlarını (OpenAlex, Semantic Scholar, CORE, Google Books…) **yalnızca kendi** `services/verify/.env` dosyasından okur. Her süreç aynı anda bir kayıt doğrular; paralellik için birden çok kopya çalıştırın.
+- **Doğrulama servisi** (`services/verify`): kaynak motorunu çalıştırır. İçerik kontrolü için yayının **tam metnini edinir**: Europe PMC, Unpaywall, Crossref bağlantıları ve kaynak adresi denenir, PDF'ler bu serviste Python ile okunur. Dizin ve tam metin anahtarlarını (OpenAlex, Semantic Scholar, CORE, Google Books, `UNPAYWALL_EMAIL`, `CROSSREF_MAILTO`…) **yalnızca kendi** `services/verify/.env` dosyasından okur. Her süreç aynı anda bir iş yapar; paralellik için birden çok kopya çalıştırın. Farklı IP'lerden ve farklı anahtarlarla çalışan kopyalar sağlayıcı kotalarını ayrı ayrı kullanır.
 - **LLM servisi** (`services/llm`): Groq/OpenRouter anahtarlarını **yalnızca kendi** `services/llm/.env` dosyasından okur. Kota bekleme ve model yedekleme bu serviste yapılır.
 - **API anahtarları kuyruğa hiç girmez.** Ana proje bu modda anahtar tutmaz; tarayıcıya açık `/api/proxy` kapatılır.
 
@@ -43,12 +43,14 @@ Her servisin kendi RS256 anahtar çifti vardır (`web`, `verify`, `llm`):
 
 ```powershell
 node scripts/generate-keys.cjs        # bir kez: keys/public ve keys/private
-copy services\verify\.env.example services\verify\.env   # anahtarları doldurun
-copy services\llm\.env.example services\llm\.env
+node scripts/split-env.cjs            # proje .env anahtarlarını servislerin .env dosyalarına taşır (yedek: .env.yedek)
+# ya da services\verify\.env.example ve services\llm\.env.example dosyalarını .env olarak kopyalayıp doldurun
 node scripts/start-services.cjs       # kuyruk + 2 doğrulama + 1 LLM + web
 ```
 
-Başlatıcı, bir servis düşerse onu yeniden başlatır. Ayarlar ortam değişkenleriyle verilir: `PORT`, `QUEUE_PORT`, `VERIFY_INSTANCES`, `LLM_INSTANCES`.
+Başlatıcı, bir servis düşerse onu yeniden başlatır. Ayarlar ortam değişkenleriyle verilir: `PORT`, `QUEUE_PORT`, `VERIFY_INSTANCES` ve `LLM_INSTANCES` (en çok 64). Web sürecine verilen `VERIFY_PARALLEL` (varsayılan 4), bir doğrulama çalışmasında aynı anda kuyruğa gönderilecek kayıt sayısıdır; çok sayıda doğrulama servisi varsa bunu da artırın.
+
+Yerel mod (`QUEUE_URL` olmadan `node server.cjs`), anahtarları yalnızca proje `.env` dosyasından okur. Anahtarlar servislere taşındıysa bu mod anahtarsız sorgular yapar.
 
 ### Docker / başka sunucular
 
@@ -57,7 +59,7 @@ node scripts/generate-keys.cjs
 docker compose up --build
 ```
 
-- `docker-compose.yml` kuyruğu, iki doğrulama servisini, bir LLM servisini ve web uygulamasını başlatır.
+- `docker-compose.yml` kuyruğu, iki doğrulama servisini, bir LLM servisini ve web uygulamasını başlatır. Kopya sayısı için: `docker compose up --build --scale verify=20`. Doğrulama servisi imajı (`python` hedefi), tam metin PDF'leri için Python ve pypdf içerir.
 - Her container yalnızca açık anahtarları ve **kendi** özel anahtarını (Docker secret) görür.
 - Servisler başka sunucuda container olarak çalıştırılabilir. Gerekenler: aynı imaj, `QUEUE_URL=http(s)://kuyruk-adresi:4180`, `keys/public` klasörü ve o servisin özel anahtarı (`JWT_PRIVATE_KEY_FILE`).
 - Linux'ta özel anahtar dosyalarının container kullanıcısı (uid 1000) tarafından okunabilmesi gerekir.

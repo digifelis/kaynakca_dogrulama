@@ -10,7 +10,7 @@ const root = path.join(__dirname, '..');
 const keysDir = process.env.JWT_KEYS_DIR || path.join(root, 'keys');
 const queuePort = Number(process.env.QUEUE_PORT) || 4180;
 const queueUrl = `http://127.0.0.1:${queuePort}`;
-const count = (name, fallback) => Math.max(1, Math.min(16, Number(process.env[name]) || fallback));
+const count = (name, fallback) => Math.max(1, Math.min(64, Number(process.env[name]) || fallback));
 
 if (!fs.existsSync(path.join(keysDir, 'private', 'web.private.pem'))) execFileSync(process.execPath, [path.join(__dirname, 'generate-keys.cjs'), keysDir], { stdio: 'inherit' });
 

@@ -2,7 +2,6 @@
 // The provider keys live only in this service's .env; jobs never carry them.
 const path = require('node:path');
 const { loadEnv } = require('../../lib/env.cjs');
-loadEnv(path.join(__dirname, '.env'));
 const Jwt = require('../../lib/jwt.cjs');
 const { createQueueClient, startWorker } = require('../../lib/queue-client.cjs');
 const Content = require('../../word-content.cjs');
@@ -42,6 +41,8 @@ function start({ queueUrl = process.env.QUEUE_URL, keysDir = process.env.JWT_KEY
 }
 
 if (require.main === module) {
+  // Keys are read only when this file runs as the service, never when it is imported (e.g. by tests).
+  loadEnv(path.join(__dirname, '.env'));
   const worker = start();
   const stop = () => worker.stop().then(() => process.exit(0));
   process.on('SIGTERM', stop); process.on('SIGINT', stop);

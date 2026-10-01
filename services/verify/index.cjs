@@ -5,7 +5,6 @@
 const http = require('node:http');
 const path = require('node:path');
 const { loadEnv } = require('../../lib/env.cjs');
-loadEnv(path.join(__dirname, '.env'));
 const Jwt = require('../../lib/jwt.cjs');
 const Backend = require('../../lib/backend.cjs');
 const { startWorker } = require('../../lib/queue-client.cjs');
@@ -13,7 +12,17 @@ const { createLlmTransport } = require('../../lib/llm-queue.cjs');
 const { proxyRequest, providerConfig } = require('../../lib/provider-proxy.cjs');
 const Groq = require('../../web-groq.cjs');
 const engine = require('../../reference-engine.js');
+const Content = require('../../word-content.cjs');
+const { python } = require('../../lib/python.cjs');
 
+const text = (value, max) => value === undefined || value === null || typeof value === 'string' && value.length <= max;
+function validateFullText(payload) {
+  const r = payload.reference;
+  if (!r || typeof r !== 'object' || !text(r.raw, 8000) || !r.raw || !text(r.effectiveRaw, 8000) || !text(r.title, 2000)) throw Error('Geçersiz kaynak kaydı');
+  const matched = r.verification?.matched;
+  if (matched !== null && matched !== undefined && (typeof matched !== 'object' || JSON.stringify(matched).length > 50000)) throw Error('Geçersiz eşleşme kaydı');
+  return { raw: r.raw, effectiveRaw: r.effectiveRaw, title: r.title, verification: { matched: matched || null } };
+}
 function validate(payload) {
   if (typeof payload?.reference !== 'string' || !payload.reference.trim() || payload.reference.length > 8000) throw Error('Geçersiz kaynak kaydı');
   return { reference: payload.reference, options: payload.options?.primaryOnly ? { primaryOnly: true } : {} };
@@ -58,6 +67,8 @@ async function start({ queueUrl = process.env.QUEUE_URL, keysDir = process.env.J
     onRetry: event => current?.({ type: 'wait', provider: event.provider, retryAt: event.retryAt }),
   });
   const handler = async (payload, { signal, emit }) => {
+    // Full text of a publication for the content check: open-access sources, PDFs parsed with Python here.
+    if (payload?.kind === 'fulltext') return Content.fullText(validateFullText(payload), python, signal, { onDebug: event => emit(event) });
     const { reference, options } = validate(payload);
     current = emit; engine.configure({ signal });
     try { return await engine.verifyReference(reference, options); }
@@ -69,9 +80,11 @@ async function start({ queueUrl = process.env.QUEUE_URL, keysDir = process.env.J
 }
 
 if (require.main === module) {
+  // Keys are read only when this file runs as the service, never when it is imported (e.g. by tests).
+  loadEnv(path.join(__dirname, '.env'));
   start().then(service => {
     const stop = () => service.stop().then(() => process.exit(0));
     process.on('SIGTERM', stop); process.on('SIGINT', stop);
   }, error => { console.error(error.message); process.exit(1); });
 }
-module.exports = { start, validate };
+module.exports = { start, validate, validateFullText };

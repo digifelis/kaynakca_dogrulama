@@ -207,3 +207,12 @@ test('web metadata in queue mode returns at once with the retry time while the L
     assert.match((await Groq.enrich(page, 'metin', null)).warnings.at(-1), /LLM servisi bulunamadı/);
   } finally { Groq.useTransport(null); }
 });
+
+test('full-text jobs carry only the reference fields the acquisition needs and are validated in the service', () => {
+  const { validateFullText } = require('../services/verify/index.cjs');
+  const reference = validateFullText({ kind: 'fulltext', reference: { raw: 'Vaswani, A. (2017). Attention. https://arxiv.org/abs/1706.03762', title: 'Attention', verification: { matched: { doi: '10.1/x' } }, secret: 'drop me' } });
+  assert.deepEqual(Object.keys(reference).sort(), ['effectiveRaw', 'raw', 'title', 'verification']);
+  assert.equal(reference.verification.matched.doi, '10.1/x');
+  assert.throws(() => validateFullText({ kind: 'fulltext', reference: { raw: '' } }), /Geçersiz/);
+  assert.throws(() => validateFullText({ kind: 'fulltext', reference: { raw: 'x', title: 'y'.repeat(3000) } }), /Geçersiz/);
+});

@@ -35,6 +35,9 @@ services:
 
   verify:
     <<: *service
+    # Needs Python to read full-text PDFs for the content check.
+    build: { context: ., target: python }
+    image: kaynakca-masasi/verify
     command: ["node", "services/verify/index.cjs"]
     environment:
       QUEUE_URL: http://queue:4180
