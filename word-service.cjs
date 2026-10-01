@@ -73,8 +73,10 @@ function rebuild(s){
   s.effectiveReferences=refs;
 }
 const sessions=new Map();
-function dispose(s){s.worker?.terminate();s.controller?.abort();sessions.delete(s.id);}
-function persist(s){s.updatedAt=Date.now();Store.save(s);}
+function dispose(s){clearTimeout(s.persistTimer);s.persistTimer=null;s.worker?.terminate();s.controller?.abort();sessions.delete(s.id);}
+function persist(s){clearTimeout(s.persistTimer);s.persistTimer=null;s.updatedAt=Date.now();Store.save(s);}
+// Debug events arrive in bursts; coalesce their archive writes instead of saving on every event.
+function persistSoon(s){if(s.persistTimer||s.deleted)return;s.persistTimer=setTimeout(()=>{s.persistTimer=null;if(!s.deleted)persist(s);},1000);s.persistTimer.unref?.();}
 function editable(s,p){return p.part==='word/document.xml'&&p.group===p.part&&!p.protected&&!p.paragraphLocked&&!(s.headings||[]).includes(p.index)&&!(p.index>=s.range.start&&p.index<=s.range.end)&&!s.references.some(r=>r.paragraphs.includes(p.id));}
 function referenceDebug(s){return s.references.map((reference,index)=>{
   const result=reference.verification;if(!result?.pendingRetryAt&&!result?.fallbackNeeded&&!result?.debugRequests?.length)return null;
@@ -102,7 +104,7 @@ function startVerification(s,port,after,scope){
   const content=()=>{if(!after&&!s.autoContentScope)return;if(s.job.running){s.followupContent=true;return;}startContent(s,s.autoContentScope||scope).catch(e=>{s.job={running:false,message:e.message};persist(s);});};
   worker.on('message',m=>{
     if(s.worker!==worker)return;
-    if(m.type==='debug'){const r=s.references[m.event.index];addDebugEvent(s,{...m.event,index:m.event.index+1,record:r?.raw});persist(s);return;}
+    if(m.type==='debug'){const r=s.references[m.event.index];addDebugEvent(s,{...m.event,index:m.event.index+1,record:r?.raw});persistSoon(s);return;}
     if(m.type==='result'){
       const r=s.references[m.index],old=r.verification,suffix=r.year.match(/[a-z]$/)?.[0];
       if(suffix&&m.result.matched?.year)for(const key of ['suggested','suggestedHtml','corrected','correctedHtml'])if(m.result[key])m.result[key]=m.result[key].replace(`(${m.result.matched.year})`,`(${m.result.matched.year}${suffix})`);
@@ -110,10 +112,10 @@ function startVerification(s,port,after,scope){
       if(JSON.stringify(old?.matched)!==JSON.stringify(m.result.matched)||old?.status!==m.result.status)for(const c of s.citations)if(c.reference===r.id)delete s.content[c.id];
       s.referenceJob.completed=[...seen].filter(i=>!s.references[i].verification?.pendingRetryAt&&!s.references[i].verification?.fallbackNeeded).length;s.referenceJob.debug=referenceDebug(s);
       if(!released){s.job.completed=s.referenceJob.completed;s.job.message=`Kaynak ${m.index+1} sorgulandı; ${seen.size}/${s.references.length} kayda bakıldı`;delete s.job.retryAt;}
-      rebuild(s);persist(s);
+      rebuild(s);
       addDebugEvent(s,{scope:'reference',kind:'result',provider:m.result.provider||'Kaynak doğrulama',index:m.index+1,status:m.result.status,detail:m.result.statusText,record:r.raw});persist(s);
     }
-    if(m.type==='wait'){s.referenceJob.retryAt=m.retryAt;s.referenceJob.provider=m.provider;s.referenceJob.lastWait={provider:m.provider,retryAt:m.retryAt,receivedAt:Date.now()};s.referenceJob.debug=referenceDebug(s);if(!released){s.job.message=m.provider+' kotası bekleniyor; otomatik devam edilecek';s.job.retryAt=m.retryAt;}addDebugEvent(s,{scope:'reference',kind:'wait',provider:m.provider,index:m.index+1,retryAt:m.retryAt,record:s.references[m.index]?.raw});persist(s);}
+    if(m.type==='wait'){s.referenceJob.retryAt=m.retryAt;s.referenceJob.provider=m.provider;s.referenceJob.lastWait={provider:m.provider,retryAt:m.retryAt,receivedAt:Date.now()};s.referenceJob.debug=referenceDebug(s);if(!released){s.job.message=m.provider+' kotası bekleniyor; otomatik devam edilecek';s.job.retryAt=m.retryAt;}addDebugEvent(s,{scope:'reference',kind:'wait',provider:m.provider,index:m.index+1,retryAt:m.retryAt,record:s.references[m.index]?.raw});persistSoon(s);}
     if(m.type==='ready'){
       const runContent=!released||newReady;newReady=false;
       s.referenceJob={...s.referenceJob,pending:m.pending,completed:m.completed,retryAt:m.retryAt,debug:referenceDebug(s)};
@@ -156,11 +158,11 @@ async function startContent(s,scope={}){
         if(!ref||(c.issue&&!/^Korunan alan|^Alan kodu\/korunan öğe/.test(c.issue)))throw Error('Önce atıf eşleşmesini/uyuşmazlığını çözün.');
         if(ref.verification?.status!=='verified'&&!ref.accepted&&!s.manualConfirmed.has(ref.id)&&!Content.referenceUrl(ref))throw Error('Kaynak kimliği doğrulanmadı; eşleşmeyi inceleyip kabul edin.');
         let text=s.texts[ref.id];
-        if(!text){s.job.message=`${c.location}: tam metin aranıyor`;text=await Content.fullText(ref,python,signal,{onDebug:event=>{addDebugEvent(s,{...event,citation:c.location,record:ref.raw});persist(s);}});
+        if(!text){s.job.message=`${c.location}: tam metin aranıyor`;text=await Content.fullText(ref,python,signal,{onDebug:event=>{addDebugEvent(s,{...event,citation:c.location,record:ref.raw});persistSoon(s);}});
           const expectedTitle=Content.referenceTitle(ref);if(text.title&&expectedTitle&&Engine.titleScore(expectedTitle,text.title)<.65)throw Error('Erişilen yayının başlığı kaynakla uyuşmuyor.');s.texts[ref.id]=text;}
         if(text.needsConfirmation){const notice=Content.preprintNotice(text);throw Error('PDF’nin yayın kimliğini ve sürümünü önizleyip kabul edin.'+(notice?' PDF sürüm beyanı: “'+notice+'”':''));}
         s.job.message=`${c.location}: LLM ile karşılaştırılıyor`;
-        s.content[c.id]=await Content.evaluate(c,text,signal,at=>{s.job.message='LLM hız/kota beklemesi; otomatik devam edilecek';s.job.retryAt=at;},event=>{addDebugEvent(s,{...event,citation:c.location,record:c.sentence});persist(s);});
+        s.content[c.id]=await Content.evaluate(c,text,signal,at=>{s.job.message='LLM hız/kota beklemesi; otomatik devam edilecek';s.job.retryAt=at;},event=>{addDebugEvent(s,{...event,citation:c.location,record:c.sentence});persistSoon(s);});
       }catch(e){if(signal.aborted)throw e;s.content[c.id]={verdict:'unassessable',explanation:e.message,claims:[]};}
       s.job.completed++;delete s.job.retryAt;rebuild(s);persist(s);
     }
