@@ -2,6 +2,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const wordService = require('./word-service.cjs');
+const writerService = require('./writer-service.cjs');
 const webInspect = require('./web-source.cjs').createService();
 
 // Only this local project file is read; keys are never returned to the browser.
@@ -58,6 +59,7 @@ function createServer({ inspectWeb = webInspect } = {}) {
     try {
       const url = new URL(req.url, 'http://localhost');
       if (await wordService.handle(req, res, url, json)) return;
+      if (await writerService.handle(req, res, url, json)) return;
       if (await handleBatches(req, res, url)) return;
       if (req.method !== 'GET') return json(res, 405, { error: 'Yalnız GET desteklenir' });
       // In queue mode index and web lookups belong to the verification service, which holds the keys.
@@ -88,7 +90,7 @@ function createServer({ inspectWeb = webInspect } = {}) {
         return json(res, result.status, result.body, result.retryAfter ? { 'Retry-After': result.retryAfter } : {});
       }
       const files = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/pages.js': ['pages.js', 'text/javascript'], '/ui.js': ['ui.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'],
-        '/web-reference.js': ['web-reference.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
+        '/web-reference.js': ['web-reference.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/writer-app.js': ['writer-app.js', 'text/javascript'], '/writer-cite.js': ['writer-cite.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
       const file = files[url.pathname];
       if (!file) return json(res, 404, { error: 'Dosya bulunamadı' });
       res.writeHead(200, { 'Content-Type': `${file[1]}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });

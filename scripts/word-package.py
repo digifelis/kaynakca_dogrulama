@@ -3,6 +3,7 @@ import sys, json, io, zipfile, base64, re, copy
 import xml.etree.ElementTree as ET
 sys.stdin.reconfigure(encoding='utf-8')
 
+LIMIT = 20 * 1024 * 1024
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 ET.register_namespace('w', W[1:-1])
 ET.register_namespace('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships')
@@ -16,7 +17,7 @@ def read_xml(data):
     return ET.fromstring(data)
 
 def package(data):
-    if len(data) > 20 * 1024 * 1024: raise ValueError('DOCX en fazla 20 MB olabilir.')
+    if len(data) > LIMIT: raise ValueError('DOCX en fazla %d MB olabilir.' % (LIMIT // 1024 // 1024))
     z = zipfile.ZipFile(io.BytesIO(data))
     infos = z.infolist()
     if len(infos) > 2500 or sum(i.file_size for i in infos) > 80 * 1024 * 1024:
@@ -189,7 +190,7 @@ def pdf_lines(reader):
 
 def pdf_paragraphs(data):
     from pypdf import PdfReader
-    if len(data) > 20 * 1024 * 1024: raise ValueError('PDF en fazla 20 MB olabilir.')
+    if len(data) > LIMIT: raise ValueError('PDF en fazla %d MB olabilir.' % (LIMIT // 1024 // 1024))
     reader = PdfReader(io.BytesIO(data))
     if reader.is_encrypted:
         try: ok = reader.decrypt('')
@@ -275,8 +276,75 @@ def tidy(text):
     text = re.sub(r'(?<=[^\W\d_]) -(?=[^\W\d_])', '-', text)
     return text
 
+def core_properties(z):
+    """Title/author from docProps/core.xml; empty strings when absent."""
+    try:
+        root = read_xml(z.read('docProps/core.xml'))
+    except Exception:
+        return {}
+    pick = lambda name: next((''.join(n.itertext()).strip() for n in root.iter() if n.tag.split('}')[-1] == name), '')
+    return {'title': pick('title')[:300], 'author': pick('creator')[:300]}
+
+def pdf_info(data):
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        meta = reader.metadata or {}
+        return {'title': str(meta.get('/Title') or '')[:300], 'author': str(meta.get('/Author') or '')[:300], 'pages': len(reader.pages)}
+    except Exception:
+        return {}
+
+def build_docx(blocks):
+    """Minimal DOCX from [{type: h1|h2|h3|p|li|ol, runs: [{text, bold, italic}]}]."""
+    esc = lambda t: t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    if len(blocks) > 5000: raise ValueError('Makale blok sınırını aşıyor.')
+    styles = {'h1': 'Heading1', 'h2': 'Heading2', 'h3': 'Heading3'}
+    body = []
+    for b in blocks:
+        kind = b.get('type', 'p')
+        ppr = ''
+        prefix = ''
+        if kind in styles: ppr = '<w:pPr><w:pStyle w:val="%s"/></w:pPr>' % styles[kind]
+        elif kind == 'li': prefix = '• '; ppr = '<w:pPr><w:ind w:left="567" w:hanging="283"/></w:pPr>'
+        elif kind == 'ol': ppr = '<w:pPr><w:ind w:left="567" w:hanging="283"/></w:pPr>'
+        elif kind == 'ref': ppr = '<w:pPr><w:ind w:left="567" w:hanging="567"/></w:pPr>'
+        runs = ''
+        if prefix: runs += '<w:r><w:t xml:space="preserve">%s</w:t></w:r>' % prefix
+        for r in b.get('runs', []):
+            text = str(r.get('text', ''))
+            if not text: continue
+            rpr = ('<w:b/>' if r.get('bold') else '') + ('<w:i/>' if r.get('italic') else '')
+            rpr = '<w:rPr>%s</w:rPr>' % rpr if rpr else ''
+            runs += '<w:r>%s<w:t xml:space="preserve">%s</w:t></w:r>' % (rpr, esc(text))
+        body.append('<w:p>%s%s</w:p>' % (ppr, runs))
+    ns = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    document = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document %s><w:body>%s<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>' % (ns, ''.join(body))
+    def style(sid, name, size, bold):
+        return '<w:style w:type="paragraph" w:styleId="%s"><w:name w:val="%s"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/></w:pPr><w:rPr>%s<w:sz w:val="%d"/></w:rPr></w:style>' % (sid, name, '<w:b/>' if bold else '', size)
+    styles_xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles %s>'
+        '<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/></w:rPr></w:rPrDefault>'
+        '<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>'
+        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>%s%s%s</w:styles>') % (
+        ns, style('Heading1', 'heading 1', 32, True), style('Heading2', 'heading 2', 28, True), style('Heading3', 'heading 3', 26, True))
+    content_types = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>')
+    rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+    doc_rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>')
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', content_types); z.writestr('_rels/.rels', rels)
+        z.writestr('word/document.xml', document); z.writestr('word/styles.xml', styles_xml); z.writestr('word/_rels/document.xml.rels', doc_rels)
+    return out.getvalue()
+
 def main():
+    global LIMIT
     request = json.load(sys.stdin)
+    # The writing assistant raises the limit to the user's plan; word checks keep the 20 MB default.
+    LIMIT = min(max(int(request.get('limit') or LIMIT), 1), 200 * 1024 * 1024)
     data = base64.b64decode(request['data'], validate=True)
     if request['operation'] == 'pdf':
         from pypdf import PdfReader
@@ -288,7 +356,9 @@ def main():
         print(json.dumps({'passages': pages}, ensure_ascii=True)); return
     if request['operation'] == 'inspect_pdf':
         if not data.startswith(b'%PDF-'): raise ValueError('Geçerli PDF değil.')
-        print(json.dumps({'paragraphs': pdf_paragraphs(data), 'warnings': ['PDF metni sayfa düzeninden yeniden kurulur; paragraf ve kaynakça sınırları sezgiseldir, gerekirse kaynakça bölümünü elle seçin. Üstbilgi, altbilgi ve sayfa numaraları ayıklanır; tablo ve dipnot yapısı korunmaz. Düzeltmeler PDF dosyasına yazılamaz; denetim raporunu indirebilirsiniz.']}, ensure_ascii=True)); return
+        print(json.dumps({'metadata': pdf_info(data), 'paragraphs': pdf_paragraphs(data), 'warnings': ['PDF metni sayfa düzeninden yeniden kurulur; paragraf ve kaynakça sınırları sezgiseldir, gerekirse kaynakça bölümünü elle seçin. Üstbilgi, altbilgi ve sayfa numaraları ayıklanır; tablo ve dipnot yapısı korunmaz. Düzeltmeler PDF dosyasına yazılamaz; denetim raporunu indirebilirsiniz.']}, ensure_ascii=True)); return
+    if request['operation'] == 'build_docx':
+        print(json.dumps({'data': base64.b64encode(build_docx(request['blocks'])).decode('ascii')})); return
     if request['operation'] == 'xml':
         root = read_xml(data)
         for parent in root.iter():
@@ -300,7 +370,7 @@ def main():
     z = package(data)
     if request['operation'] == 'inspect':
         ps, _ = mapping(z)
-        print(json.dumps({'paragraphs': ps, 'warnings': ['Üstbilgi/altbilgi taranmaz. Sayısal atıflar kapsam dışıdır. Alan kodları ve izlenen değişiklikler yalnız raporlanır.']}, ensure_ascii=True))
+        print(json.dumps({'metadata': core_properties(z), 'paragraphs': ps, 'warnings': ['Üstbilgi/altbilgi taranmaz. Sayısal atıflar kapsam dışıdır. Alan kodları ve izlenen değişiklikler yalnız raporlanır.']}, ensure_ascii=True))
     elif request['operation'] == 'export':
         print(json.dumps({'data': base64.b64encode(apply(z, request['patches'])).decode('ascii')}))
 

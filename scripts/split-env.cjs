@@ -7,7 +7,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const targets = {
   verify: ['OPENALEX_API_KEY', 'NCBI_API_KEY', 'SEMANTIC_SCHOLAR_API_KEY', 'CORE_API_KEY', 'GOOGLE_BOOKS_API_KEY', 'CROSSREF_MAILTO', 'UNPAYWALL_EMAIL'],
-  llm: ['GROQ_API_KEY', 'GROQ_MODEL', 'OPENROUTER_API_KEY', 'OPENROUTER_ENABLED', 'OPENROUTER_MODELS', 'OPENROUTER_SHARE'],
+  llm: ['GROQ_API_KEY', 'GROQ_MODEL', 'OPENROUTER_API_KEY', 'OPENROUTER_ENABLED', 'OPENROUTER_MODELS', 'OPENROUTER_SHARE', 'GEMINI_API_KEY', 'GEMINI_EMBEDDING_MODEL', 'GEMINI_EMBEDDING_DIM'],
 };
 const source = path.join(root, '.env');
 if (!fs.existsSync(source)) { console.log('.env bulunamadı; taşınacak anahtar yok.'); process.exit(0); }

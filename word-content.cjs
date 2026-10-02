@@ -403,4 +403,4 @@ async function evaluate(citation,text,signal,onWait,onDebug=()=>{}){
   return {...result,analysisVersion:2,coverage:{batches:batches.length,scannedBatches:results.length,earlyStop,queryExpansion:expansion.length>0,passages:all.length,characters},retrieval};
 }
 
-module.exports={chat,useChatTransport,llmAvailable,llmMissing,publicationPassages,rankPassages,planBatches,queryWeights,language,publicIp,remote,referenceUrl,referenceTitle,extractHtml,semanticRecord,unpaywallRecord,fullText,preprintNotice,selectPassages,evaluate,openRouterEnabled,openRouterModels,jsonResult};
+module.exports={chat,llmChat,useChatTransport,llmAvailable,llmMissing,publicationPassages,rankPassages,planBatches,queryWeights,language,publicIp,remote,referenceUrl,referenceTitle,extractHtml,semanticRecord,unpaywallRecord,fullText,preprintNotice,selectPassages,evaluate,openRouterEnabled,openRouterModels,jsonResult};

@@ -1,10 +1,12 @@
-// LLM service: answers "llm" queue jobs (citation evidence, search terms, web metadata) with Groq/OpenRouter.
+// LLM service: answers "llm" queue jobs (citation evidence, search terms, web metadata, writing answers) with Groq/OpenRouter,
+// and embedding jobs (writing assistant) with Gemini.
 // The provider keys live only in this service's .env; jobs never carry them.
 const path = require('node:path');
 const { loadEnv } = require('../../lib/env.cjs');
 const Jwt = require('../../lib/jwt.cjs');
 const { createQueueClient, startWorker } = require('../../lib/queue-client.cjs');
 const Content = require('../../word-content.cjs');
+const Gemini = require('../../lib/gemini-embed.cjs');
 
 const LIMITS = { name: 64, system: 20000, user: 4 * 1024 * 1024 };
 function validate(payload) {
@@ -20,6 +22,8 @@ function validate(payload) {
 }
 
 async function handle(payload, { signal, emit }) {
+  // Embeddings for the writing assistant; Gemini quota replies are handed back so the caller can wait and retry.
+  if (payload?.kind === 'embed') return Gemini.embed(Gemini.validate(payload), { signal });
   const spec = validate(payload);
   let lastWait = 0;
   // Quota waits tick every second inside chat(); only a changed retry time is reported.
@@ -30,13 +34,13 @@ async function handle(payload, { signal, emit }) {
     throw error;
   }
 }
-const capabilities = () => ({ groq: !!process.env.GROQ_API_KEY, openRouter: Content.openRouterEnabled() });
+const capabilities = () => ({ groq: !!process.env.GROQ_API_KEY, openRouter: Content.openRouterEnabled(), embedding: Gemini.configured() });
 
 function start({ queueUrl = process.env.QUEUE_URL, keysDir = process.env.JWT_KEYS_DIR || path.join(__dirname, '../../keys'), concurrency = Number(process.env.LLM_CONCURRENCY) || 1, log = console.log } = {}) {
   if (!queueUrl) throw Error('QUEUE_URL tanımlı değil.');
   const client = createQueueClient({ url: queueUrl, issuer: 'llm', privateKey: Jwt.loadPrivateKey(keysDir, 'llm') });
   const worker = startWorker({ client, queue: 'llm', publicKeys: Jwt.loadPublicKeys(keysDir), trustedPublishers: ['web', 'verify'], handler: handle, capabilities: capabilities(), concurrency, log });
-  log(`LLM servisi kuyruğu dinliyor: ${queueUrl} (Groq: ${capabilities().groq ? 'var' : 'yok'}, OpenRouter: ${capabilities().openRouter ? 'var' : 'yok'})`);
+  log(`LLM servisi kuyruğu dinliyor: ${queueUrl} (Groq: ${capabilities().groq ? 'var' : 'yok'}, OpenRouter: ${capabilities().openRouter ? 'var' : 'yok'}, Gemini embedding: ${capabilities().embedding ? 'var' : 'yok'})`);
   return worker;
 }
 
