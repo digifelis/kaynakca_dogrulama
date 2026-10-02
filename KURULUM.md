@@ -320,7 +320,12 @@ Yazım yardımcısı (`#/yazim`) ek bir servis gerektirmez; mevcut `web` ve `llm
 
 Web sunucusunda doğrudan çalıştırma örneği (kuyruklu kurulum, Bölüm 3'e ek olarak veri birimi zaten `-v web-data:/data` ile bağlıdır):
 ```bash
-docker run -d --name web --restart unless-stopped   -e QUEUE_URL=https://kuyruk.ornek.com -e JWT_KEYS_DIR=/keys   -e JWT_PRIVATE_KEY_FILE=/run/secrets/web_key   -v "$PWD/keys/public:/keys/public:ro"   -v "$PWD/keys/private/web.private.pem:/run/secrets/web_key:ro"   -v web-data:/data -p 127.0.0.1:4173:4173 kaynakca-masasi/web
+docker run -d --name web --restart unless-stopped \
+  -e QUEUE_URL=https://kuyruk.ornek.com -e JWT_KEYS_DIR=/keys \
+  -e JWT_PRIVATE_KEY_FILE=/run/secrets/web_key \
+  -v "$PWD/keys/public:/keys/public:ro" \
+  -v "$PWD/keys/private/web.private.pem:/run/secrets/web_key:ro" \
+  -v web-data:/data -p 127.0.0.1:4173:4173 kaynakca-masasi/web
 ```
 Kontrol: `curl -s -H "x-word-request: 1" http://127.0.0.1:4173/api/writer/bootstrap` yanıtında `services.llm` ve `services.embedding` alanları `true` olmalıdır (kuyruklu kurulumda llm servisi çalışıyorsa).
 
