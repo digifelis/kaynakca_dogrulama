@@ -49,7 +49,7 @@ docker --version
 
 ### 2.2 Kodu alın
 ```bash
-git clone <depo-adresi> kaynakca_dogrula
+git clone https://github.com/digifelis/kaynakca_dogrulama.git kaynakca_dogrula
 cd kaynakca_dogrula
 git checkout mikroservis
 ```
