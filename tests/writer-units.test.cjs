@@ -244,3 +244,11 @@ test('gemini embedding: request shape, normalization, quota and error handling (
   assert.throws(() => Gemini.validate({ texts: [], task: 'document' })); assert.throws(() => Gemini.validate({ texts: ['a'], task: 'x' })); assert.throws(() => Gemini.validate({ texts: ['a'.repeat(13000)], task: 'query' }));
   delete process.env.GEMINI_API_KEY; await assert.rejects(Gemini.embed({ texts: ['a'], task: 'query' }), /GEMINI_API_KEY/);
 });
+
+test('authors are read from the line under the title only when it looks like a list of names', () => {
+  const para = (...texts) => texts.map((text, i) => ({ part: 'word/document.xml', index: i, text }));
+  assert.deepEqual(Meta.guessAuthors(para('Digital transformation in higher education', 'Published 2021. Smith, J. and Brown, K.', 'Digital learning platforms increased engagement.'), 'Digital transformation in higher education'), ['Smith, J.', 'Brown, K.']);
+  assert.deepEqual(Meta.guessAuthors(para('Eğitimde dijital dönüşüm', 'Ahmet Yılmaz ve Ayşe Kaya'), 'Eğitimde dijital dönüşüm'), ['Ahmet Yılmaz', 'Ayşe Kaya']);
+  assert.deepEqual(Meta.guessAuthors(para('Eğitimde dijital dönüşüm', 'Bu çalışma eğitimde dijital dönüşümü incelemektedir ve sonuçlar açıklanmıştır.'), 'Eğitimde dijital dönüşüm'), []);
+  assert.deepEqual(Meta.guessAuthors(para('Başlık burada', 'Ankara Üniversitesi Eğitim Fakültesi, 2020'), 'Başlık burada'), [], 'an affiliation line is not an author list');
+});

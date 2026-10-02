@@ -2,11 +2,12 @@
   const pages = {
     kaynakca: { title: 'Kaynakça doğrulama', heading: 'Kaynakçanızı doğrulayın.', description: 'Kaynak listenizi yapıştırın, akademik kayıtlarla karşılaştırın ve düzeltilmiş APA 7 çıktısını alın.' },
     word: { title: 'Yetim Kaynak kontrolü', heading: 'Makalenizdeki atıfları denetleyin.', description: 'Word veya PDF dosyanızı yükleyin. Kaynakça eşleşmelerini, yetim atıfları ve yazar–yıl uyuşmazlıklarını inceleyin.' },
+    yazim: { title: 'Yazım yardımcısı', heading: 'Kaynaklarınızla makale yazın.', description: 'PDF veya Word kaynaklarınızı yükleyin, sorularınızı kaynaklara dayanarak yanıtlatın ve cevapları kademe kademe makalenize ekleyin.' },
     icerik: { title: 'İçerik kontrolü', heading: 'Atıflarınızın kanıtını inceleyin.', description: 'Atıf cümlelerini ilgili yayınlarla karşılaştırın. İddiaları, bağlamı ve kaynak pasajlarını birlikte değerlendirin.' },
   };
   let current;
   function readRoute() {
-    const route = location.hash.match(/^#\/(kaynakca|word|icerik)(?:$|[/?])/);
+    const route = location.hash.match(/^#\/(kaynakca|word|icerik|yazim)(?:$|[/?])/);
     // Keep old document paragraph bookmarks useful.
     return route?.[1] || (location.hash.startsWith('#word-p-') ? 'word' : current || 'kaynakca');
   }

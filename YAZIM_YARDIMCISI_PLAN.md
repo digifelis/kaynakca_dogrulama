@@ -1,7 +1,7 @@
 # Yazım yardımcısı: yüklenen kaynaklarla soru-cevap ve kademeli makale yazımı
 
 Tarih: 2 Ekim 2026
-Durum: Plan (uygulanmadı). Açık sorular en altta listelenir.
+Durum: Uygulandı (makale_olusturucu dalı). İlk sürüm kapsamındaki tüm adımlar tamamlandı; sonraki aşama maddeleri (OCR, seçili metni skill ile yeniden yazma, gerçek giriş ve paketler) açık. Uygulama notları en altta.
 
 ## Amaç
 
@@ -148,3 +148,12 @@ Geliştirme `makale_olusturucu` dalında sürdürülür (`mikroservis` dalından
 ## Açık sorular
 
 Şu an açık soru yok. Uygulama sırasında çıkan konular buraya eklenir.
+
+## Uygulama notları (2 Ekim 2026)
+
+- Uygulanan dosyalar: `lib/identity.cjs`, `lib/plans.cjs`, `lib/writer-store.cjs` (SQLite), `lib/writer-chunker.cjs`, `lib/writer-meta.cjs`, `lib/writer-search.cjs`, `lib/gemini-embed.cjs`, `lib/writer-embed.cjs`, `lib/writer-skills.cjs`, `lib/writer-answer.cjs`, `lib/writer-manuscript.cjs`, `writer-cite.js` (tarayıcı + Node ortak), `writer-service.cjs`, `writer-app.js`, `skills/*.md`; `scripts/word-package.py` künye (`metadata`), `limit` ve `build_docx` ile genişletildi; `llm` servisi `embed` işini ve `embedding` yeteneğini bildirir.
+- Embedding: `gemini-embedding-001` varsayılan (taskType ile); `gemini-embedding-2` seçilirse görev tipi metin önekiyle verilir. Vektörler istemci tarafında birim uzunluğa normalize edilir.
+- Kaynak parçaları PDF'de başladıkları sayfayla atıflanır; sayfa sınırını geçen paragraf okuyucu tarafından birleştirildiği için başladığı sayfa gösterilir. Word dosyalarında güvenilir sayfa numarası olmadığından sayfa atfı verilmez.
+- Premium ve gold limitleri geçici değerlerdir (`lib/plans.cjs`); gerçek değerleri sahibi belirler.
+- Paket limiti belge boyutu Python okuyucuya `limit` olarak iletilir (en çok 200 MB); çok büyük PDF'ler okuyucunun 45 saniyelik süre sınırına takılabilir ve açık bir hata iletisiyle reddedilir.
+- Yapılmadı (kapsam dışı): OCR, seçili metni skill ile yeniden yazma, giriş sistemi, skill'leri arayüzden yönetme.

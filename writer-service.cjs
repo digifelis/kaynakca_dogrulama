@@ -43,7 +43,7 @@ function createService(options = {}) {
   const sourcesOf = (userId, projectId) => db().listDocuments(userId, projectId);
   const sourceMap = documents => Object.fromEntries(documents.map(d => [d.id, { id: d.id, fileName: d.fileName, meta: d.meta }]));
   const documentView = d => ({ id: d.id, fileName: d.fileName, status: d.status, error: d.error, pageCount: d.pageCount, chunkCount: d.chunkCount,
-    embeddedCount: d.embeddedCount, searchMode: d.searchMode, meta: { ...d.meta, apa: undefined, apaHtml: undefined }, trust: Cite.trust(d.meta),
+    embeddedCount: d.embeddedCount, searchMode: d.searchMode, meta: d.meta, trust: Cite.trust(d.meta),
     reference: Cite.referenceEntry({ fileName: d.fileName, meta: d.meta }).text, createdAt: d.createdAt });
   const langOf = message => message.flags?.lang === 'en' ? 'en' : 'tr';
   function messageView(m, byId) {

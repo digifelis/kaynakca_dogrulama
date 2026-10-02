@@ -51,7 +51,7 @@ docker --version
 ```bash
 git clone https://github.com/digifelis/kaynakca_dogrulama.git kaynakca_dogrula
 cd kaynakca_dogrula
-git checkout mikroservis
+git checkout makale_olusturucu
 ```
 
 ### 2.3 Anahtarları üretin (yalnızca bir kez, tek makinede)
@@ -303,3 +303,25 @@ Aynı yöntem `web` ve `service` için de geçerlidir (ilgili `--target` ve komu
 | `401`/imza hatası | Sunucudaki public/private anahtarlar farklı üretimden; aynı anahtar setini kullanın (2.4). |
 | Private anahtar okunamıyor | `sudo chown 1000:1000 keys/private/*.pem` ve `chmod 400`. |
 | Port zaten kullanımda | Eski container/süreç aynı portu tutuyor: `docker ps`, `docker rm -f <ad>`. |
+
+---
+
+## 8. Yazım yardımcısı için ek ayarlar
+
+Yazım yardımcısı (`#/yazim`) ek bir servis gerektirmez; mevcut `web` ve `llm` imajları kullanılır.
+
+| Ayar | Nerede | Açıklama |
+|---|---|---|
+| `GEMINI_API_KEY` | **llm servisinin** `.env` dosyası (`services/llm/.env`) | Kaynakların embedding'i için. Yoksa yalnız anahtar kelime araması çalışır. |
+| `GEMINI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_DIM` | llm servisi `.env` | İsteğe bağlı; varsayılan `gemini-embedding-001` ve 768. |
+| `web-data` birimi (`/data`) | web sunucusu | `/data/writer` altında `writer.db` (SQLite: projeler, kaynak parçaları, vektörler, makaleler) ve `identity.secret` bulunur. **Kalıcı birim olmalı ve yedeklenmelidir.** |
+| `IDENTITY_SECRET` | web (isteğe bağlı) | Aynı kullanıcı kimliklerini birden çok web sunucusunda geçerli kılmak için ortak gizli değer. Verilmezse `identity.secret` dosyası kullanılır. |
+| `skills/` | web imajı | Skill dosyaları imajla gelir; değiştirmek için dosyayı düzenleyip imajı yeniden derleyin veya klasörü bağlayıp `SKILLS_DIR` verin. |
+
+Web sunucusunda doğrudan çalıştırma örneği (kuyruklu kurulum, Bölüm 3'e ek olarak veri birimi zaten `-v web-data:/data` ile bağlıdır):
+```bash
+docker run -d --name web --restart unless-stopped   -e QUEUE_URL=https://kuyruk.ornek.com -e JWT_KEYS_DIR=/keys   -e JWT_PRIVATE_KEY_FILE=/run/secrets/web_key   -v "$PWD/keys/public:/keys/public:ro"   -v "$PWD/keys/private/web.private.pem:/run/secrets/web_key:ro"   -v web-data:/data -p 127.0.0.1:4173:4173 kaynakca-masasi/web
+```
+Kontrol: `curl -s -H "x-word-request: 1" http://127.0.0.1:4173/api/writer/bootstrap` yanıtında `services.llm` ve `services.embedding` alanları `true` olmalıdır (kuyruklu kurulumda llm servisi çalışıyorsa).
+
+Yedekleme: `docker run --rm -v web-data:/data -v "$PWD:/backup" alpine tar czf /backup/web-data.tgz /data`.

@@ -22,6 +22,7 @@
         <a href="#/kaynakca" data-page-link="kaynakca">Kaynakça doğrulama</a>
         <a href="#/word" data-page-link="word">Yetim kaynak kontrolü</a>
         <a href="#/icerik" data-page-link="icerik">İçerik kontrolü</a>
+        <a href="#/yazim" data-page-link="yazim">Yazım yardımcısı</a>
       </nav>
       <p class="topbar-note"><span class="signal-dot" aria-hidden="true"></span>Belgeleriniz bu bilgisayarda kalır</p>
     </header>
@@ -165,6 +166,64 @@
         </div>
       </section>
       </div>
+      <div id="page-yazim" class="app-page" hidden>
+      <section class="wr" aria-labelledby="wr-title">
+        <h2 id="wr-title" class="sr-only">Yazım yardımcısı</h2>
+        <div class="wr-bar">
+          <span id="wr-plan" class="wr-badge"></span><span id="wr-usage" class="wr-muted"></span>
+          <span class="action-spacer" aria-hidden="true"></span>
+          <details class="wr-privacy"><summary>Gizlilik ve veri</summary>
+            <p>Yüklediğiniz kaynakların metni, anlamsal arama için Google Gemini’ye (embedding) ve cevap üretmek için Groq/OpenRouter’a gönderilir. Kaynaklarınız ve makaleniz yalnız sizin projenizde saklanır; projeyi veya kaynağı sildiğinizde parçaları ve vektörleri de silinir.</p>
+          </details>
+        </div>
+        <p id="wr-status" class="status-message" role="status" aria-live="polite"></p>
+        <div class="wr-grid">
+          <aside class="wr-side" aria-label="Projeler ve kaynaklar">
+            <div class="wr-block">
+              <h3>Proje</h3>
+              <div class="wr-row"><select id="wr-project" aria-label="Proje"></select></div>
+              <form id="wr-title-form" class="wr-row" hidden><input id="wr-title-input" type="text" maxlength="120" aria-label="Proje adı" placeholder="Proje adı"><button class="copy-button btn-primary" type="submit">Kaydet</button><button id="wr-title-cancel" class="text-button btn-quiet" type="button">Vazgeç</button></form>
+              <div class="wr-row"><button id="wr-new" class="copy-button btn-secondary" type="button">Yeni proje</button><button id="wr-rename" class="text-button btn-quiet" type="button">Adını değiştir</button><button id="wr-delete" class="text-button btn-danger" type="button">Projeyi sil</button></div>
+            </div>
+            <div class="wr-block">
+              <h3>Kaynaklar</h3>
+              <label class="wr-check"><input id="wr-consent" type="checkbox"> Kaynak metinlerinin yukarıda açıklanan dış servislere gönderilmesini kabul ediyorum.</label>
+              <div class="upload-zone wr-upload">
+                <input id="wr-upload" type="file" multiple disabled accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" aria-describedby="wr-upload-hint">
+                <span class="upload-icon" aria-hidden="true"></span>
+                <span class="upload-copy"><strong>PDF veya Word kaynak ekleyin</strong><span id="wr-upload-hint">Birden fazla dosya seçebilirsiniz.</span></span>
+                <span class="upload-button" aria-hidden="true">Dosya seç</span>
+              </div>
+              <div id="wr-sources" class="wr-sources"></div>
+            </div>
+          </aside>
+          <section class="wr-chat" aria-label="Soru ve cevap">
+            <div id="wr-messages" class="wr-messages" aria-live="polite"></div>
+            <form id="wr-form" class="wr-form">
+              <div class="wr-row"><label class="wr-field">Skill <select id="wr-skill"></select></label><label class="wr-check"><input id="wr-use-draft" type="checkbox"> Makaleyi bağlam olarak kullan</label></div>
+              <p id="wr-suggestion" class="wr-muted" hidden></p>
+              <textarea id="wr-question" rows="3" maxlength="4000" aria-label="Sorunuz" placeholder="Kaynaklarınıza sorunuzu yazın (Ctrl+Enter ile gönderin)"></textarea>
+              <div class="wr-row"><button id="wr-ask" class="copy-button btn-primary" type="submit">Sor</button><button id="wr-clear" class="text-button btn-quiet" type="button">Sohbeti temizle</button></div>
+            </form>
+          </section>
+          <section class="wr-doc" aria-label="Makale">
+            <div class="wr-toolbar" role="toolbar" aria-label="Biçim">
+              <button type="button" data-wr-cmd="h1" title="Başlık 1">B1</button><button type="button" data-wr-cmd="h2" title="Başlık 2">B2</button><button type="button" data-wr-cmd="h3" title="Başlık 3">B3</button>
+              <button type="button" data-wr-cmd="p" title="Paragraf">¶</button><button type="button" data-wr-cmd="bold" title="Kalın"><b>K</b></button><button type="button" data-wr-cmd="italic" title="İtalik"><i>İ</i></button>
+              <button type="button" data-wr-cmd="ul" title="Madde işaretli liste">• Liste</button><button type="button" data-wr-cmd="ol" title="Numaralı liste">1. Liste</button>
+            </div>
+            <div id="wr-editor" class="wr-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Makale metni" spellcheck="true" data-placeholder="Makaleniz burada oluşur. Cevaplardaki “Editöre ekle” ile metin ekleyebilir veya doğrudan yazabilirsiniz."></div>
+            <div class="wr-row"><span id="wr-saved" class="wr-muted" role="status"></span><span class="action-spacer" aria-hidden="true"></span><button id="wr-download" class="copy-button btn-secondary" type="button">Word olarak indir</button></div>
+            <details class="wr-block" open><summary>Kaynakça (<span id="wr-bib-count">0</span>)</summary>
+              <p class="wr-muted">Metinde atıf yapılan kaynaklardan otomatik oluşur; Word çıktısına da eklenir.</p>
+              <ol id="wr-bib" class="wr-bib"></ol>
+              <button id="wr-bib-insert" class="copy-button btn-secondary" type="button">Kaynakçayı metne ekle</button>
+            </details>
+          </section>
+        </div>
+      </section>
+      </div>
+
       <div id="page-kaynakca" class="app-page">
       <section class="workbench" aria-labelledby="input-title">
         <div class="input-grid">
@@ -252,6 +311,8 @@
     <script src="reference-engine.js" defer></script>
     <script src="app.js" defer></script>
     <script src="word-app.js" defer></script>
+    <script src="writer-cite.js" defer></script>
+    <script src="writer-app.js" defer></script>
     <script src="pages.js" defer></script>
     <script src="ui.js" defer></script>
   </body>

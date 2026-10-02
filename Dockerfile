@@ -1,7 +1,7 @@
 # Kaynakça Masası images. No npm dependencies: the code is copied as is.
 #   service: queue and LLM services (node only)
 #   python:  verification service (adds Python + pypdf for full-text PDFs)
-#   web:     the web application (Python + pypdf for Word/PDF manuscripts)
+#   web:     the web application (Python + pypdf for Word/PDF manuscripts; writing assistant data in /data/writer)
 FROM node:24-alpine AS service
 WORKDIR /app
 ENV NODE_ENV=production
@@ -21,8 +21,8 @@ CMD ["node", "services/verify/index.cjs"]
 
 FROM python AS web
 USER root
-RUN mkdir -p /data/word && chown -R node:node /data
+RUN mkdir -p /data/word /data/writer && chown -R node:node /data
 USER node
-ENV WORD_ARCHIVE_DIR=/data/word HOST=0.0.0.0 PORT=4173
+ENV WORD_ARCHIVE_DIR=/data/word WRITER_DATA_DIR=/data/writer HOST=0.0.0.0 PORT=4173
 EXPOSE 4173
 CMD ["node", "server.cjs"]
