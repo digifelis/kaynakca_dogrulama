@@ -212,7 +212,13 @@
     const meta = document.createElement('div'); meta.className = 'wr-msg-meta';
     meta.textContent = (message.role === 'user' ? 'Siz' : 'Asistan') + (message.skill && skillTitle(message.skill) ? ' · ' + skillTitle(message.skill) : '');
     node.append(meta);
-    if (message.role === 'user') { const p = document.createElement('p'); p.textContent = message.raw; node.append(p); return node; }
+    if (message.role === 'user') {
+      const p = document.createElement('p'); p.textContent = message.raw; node.append(p);
+      const actions = document.createElement('div'); actions.className = 'wr-row';
+      actions.innerHTML = '<button class="text-button btn-quiet" type="button" data-action="reask">Tekrar sor</button><button class="text-button btn-quiet" type="button" data-action="copy-question">Kopyala</button>';
+      node.append(actions);
+      return node;
+    }
     if (message.status === 'working') { const p = document.createElement('p'); p.className = 'wr-muted'; p.textContent = message.note || 'Yanıt hazırlanıyor…'; node.append(p); return node; }
     if (message.status === 'error') {
       const p = document.createElement('p'); p.className = 'wr-error-text'; p.textContent = message.error || 'Yanıt üretilemedi.'; node.append(p);
@@ -476,6 +482,13 @@
   $('messages').addEventListener('click', async event => {
     const button = event.target.closest('button[data-action]'); if (!button) return;
     const message = S.data.messages.find(m => m.id === button.closest('[data-id]').dataset.id); if (!message) return;
+    if (button.dataset.action === 'reask') {
+      const question = $('question'); question.value = message.raw;
+      if (message.skill && [...$('skill').options].some(option => option.value === message.skill)) $('skill').value = message.skill;
+      question.dispatchEvent(new Event('input')); question.focus(); question.setSelectionRange(question.value.length, question.value.length);
+      say('Prompt giriş kutusuna alındı; düzenleyip Sor ile gönderebilirsiniz.', 'ok');
+    }
+    if (button.dataset.action === 'copy-question') { try { await navigator.clipboard.writeText(message.raw); say('Prompt kopyalandı.', 'ok'); } catch { say('Kopyalanamadı.', 'error'); } }
     if (button.dataset.action === 'insert') { insertIntoEditor(answerHtml(message)); say('Cevap makaleye eklendi.', 'ok'); }
     if (button.dataset.action === 'copy') { try { await navigator.clipboard.writeText(Cite.renderText(message.raw, sourcesById(), message.lang)); say('Cevap kopyalandı.', 'ok'); } catch { say('Kopyalanamadı.', 'error'); } }
   });

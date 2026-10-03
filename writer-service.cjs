@@ -215,7 +215,7 @@ function createService(options = {}) {
       const spec = Answer.request({ skill, question, chunks, sourcesById: byId, history: asked, draft, language });
       const { result } = await deps.llm.llmChat(spec, new AbortController().signal,
         until => update({ flags: { note: `LLM kotası bekleniyor (~${Math.max(1, Math.round((until - Date.now()) / 1000))} sn).` } }));
-      const raw = typeof result?.answer === 'string' ? result.answer : '';
+      const raw = typeof result?.answer === 'string' ? Answer.stripAuditNotes(result.answer) : '';
       if (!raw.trim()) throw Error('Model boş yanıt döndürdü; tekrar deneyin.');
       const text = skill.needsSources ? Answer.applyCitations(raw, chunks, byId, language) : raw.trim();
       update({ text, status: 'done', error: null, flags: { insufficient: !!result.insufficient, lang: language } });
