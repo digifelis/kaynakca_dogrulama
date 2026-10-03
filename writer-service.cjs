@@ -217,7 +217,7 @@ function createService(options = {}) {
         until => update({ flags: { note: `LLM kotası bekleniyor (~${Math.max(1, Math.round((until - Date.now()) / 1000))} sn).` } }));
       const raw = typeof result?.answer === 'string' ? result.answer : '';
       if (!raw.trim()) throw Error('Model boş yanıt döndürdü; tekrar deneyin.');
-      const text = skill.needsSources ? Answer.applyCitations(raw, chunks) : raw.trim();
+      const text = skill.needsSources ? Answer.applyCitations(raw, chunks, byId, language) : raw.trim();
       update({ text, status: 'done', error: null, flags: { insufficient: !!result.insufficient, lang: language } });
     } catch (error) {
       const wait = error.quota && error.retryAt ? ` ${Math.max(1, Math.round((error.retryAt - Date.now()) / 1000))} saniye sonra tekrar deneyin.` : '';

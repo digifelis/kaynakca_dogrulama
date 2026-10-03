@@ -173,6 +173,11 @@ test('model markers become source tokens; unknown ids are dropped, never guessed
   const text = Answer.applyCitations('Birinci iddia [P1]. İkinci iddia [P2][P3] ve üçüncü [P1, P2]; uydurma [P9] kalmamalı.', chunks);
   assert.equal(text, 'Birinci iddia {{c:d1@4}}. İkinci iddia {{c:d2@9|d1@7}} ve üçüncü {{c:d1@4|d2@9}}; uydurma kalmamalı.');
   assert.equal(Answer.applyCitations('Atıfsız metin.', chunks), 'Atıfsız metin.');
+  // Variant spellings of a marker must not leak into the text as raw "p1".
+  assert.equal(Answer.applyCitations('A [p1, P3] B (P2) C [P1–P2].', chunks), 'A {{c:d1@4|d1@7}} B {{c:d2@9}} C {{c:d1@4|d2@9}}.');
+  // A passage named as the sentence subject becomes the author label (the cite token follows at the clause end).
+  const sources = { d1: { meta: { authors: ['Kızıldere Gökyer, A.', 'Özen, B.'] } } };
+  assert.equal(Answer.applyCitations('P1, kenti vurgular [P1]. P2 amaçlar [P2].', chunks, sources, 'tr'), 'Kızıldere Gökyer ve Özen, kenti vurgular {{c:d1@4}}. kaynak amaçlar {{c:d2@9}}.');
   const skill = Skills.parse(fs.readFileSync(path.join(__dirname, '../skills/giris-yaz.md'), 'utf8'), 'giris-yaz.md');
   const req = Answer.request({ skill, question: 'Giriş yaz', chunks: [{ documentId: 'd1', page: 2, section: 'Giriş', text: 'x'.repeat(5000) }], sourcesById: { d1: { fileName: 'a.pdf', meta: { authors: ['Yılmaz, A.'], year: '2020', title: 'T' } } }, history: [{ role: 'user', text: 'önce' }], draft: 'taslak' });
   const user = JSON.parse(req.user);

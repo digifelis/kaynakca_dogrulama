@@ -218,7 +218,9 @@ const KeyPool=require('./lib/key-pool.cjs');
 const keyPool=()=>KeyPool.pool({env:process.env,now:Date.now});
 const poolName=provider=>provider.toLowerCase();
 // OpenRouter's free models allow one request every few seconds per key.
-const gapMs=provider=>provider==='OpenRouter'?3000:0;
+// Groq limits tokens per minute (GROQ_TPM, default 30000): after a request the key rests for as long as its tokens take to refill,
+// at least one second, so the average rate stays under the limit however large the prompts are.
+const gapMs=(provider,tokens=0)=>{if(provider==='OpenRouter')return 3000;const tpm=Number(process.env.GROQ_TPM||30000);return tpm>0?Math.min(60000,Math.max(1000,Math.ceil((Number(tokens)||0)/tpm*60000))):0;};
 const providerConfigured=provider=>keyPool().hasUsable(poolName(provider));
 // When a provider can take its next request: after its own network back-off and after its earliest usable key.
 const providerReadyAt=provider=>Math.max(providerNext[provider],keyPool().nextAvailableAt(poolName(provider)));
@@ -291,7 +293,7 @@ async function chat({name,schema,system,user,maxTokens=2500,maxWaitMs,model:mode
       if(response.status===401||response.status===403){keyPool().report(key.id,{status:response.status,error:'HTTP '+response.status});onDebug({kind:'error',scope:'groq',provider,model,status:response.status,key:key.label,detail:'Anahtar sağlayıcı tarafından reddedildi.',at:Date.now()});await response.body?.cancel();if(!providerConfigured(provider)&&!alternateConfigured)throw Error(provider+' HTTP '+response.status+'; anahtar sağlayıcı tarafından reddedildi, Yönetim → API anahtarları sayfasından kontrol edin.');continue;}
       if(!response.ok){let providerDetail='';try{const errorBody=await response.text();const parsed=JSON.parse(errorBody);providerDetail=String(parsed?.error?.message||parsed?.message||'').slice(0,500);}catch{await response.body?.cancel();}keyPool().report(key.id,{status:response.status,error:providerDetail,retryAfterMs:1000,gapMs:gapMs(provider)});onDebug({kind:'error',scope:'groq',provider,model,status:response.status,detail:providerDetail||'İstek reddedildi',at:Date.now()});if(provider==='OpenRouter'&&[400,404,422].includes(response.status)&&++modelAttempts<models.length){openRouterModelIndex=(openRouterModelIndex+1)%models.length;continue;}if(alternateConfigured&&Date.now()>=providerReadyAt(alternate)){provider=alternate;continue;}throw Error(provider+' HTTP '+response.status+'; '+(providerDetail||'erişim/model ayarını kontrol edin.'));}
       const body=await response.json();
-      keyPool().report(key.id,{ok:true,tokens:{prompt:body.usage?.prompt_tokens,completion:body.usage?.completion_tokens},gapMs:gapMs(provider)});
+      keyPool().report(key.id,{ok:true,tokens:{prompt:body.usage?.prompt_tokens,completion:body.usage?.completion_tokens},gapMs:gapMs(provider,body.usage?.total_tokens||(body.usage?.prompt_tokens||0)+(body.usage?.completion_tokens||0)||Math.ceil((system.length+user.length)/3)+maxTokens)});
       try{return {result:jsonResult(body.choices?.[0]?.message?.content),provider,model,usage:body.usage||null,keyLabel:key.label};}catch(error){onDebug({kind:'error',scope:'groq',provider,model,detail:error.message,at:Date.now()});if(provider==='OpenRouter'&&++modelAttempts<models.length){openRouterModelIndex=(openRouterModelIndex+1)%models.length;continue;}if(alternateConfigured&&Date.now()>=providerReadyAt(alternate)){provider=alternate;continue;}throw error;}
     }
   });queue=run;return run;
