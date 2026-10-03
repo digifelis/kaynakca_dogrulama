@@ -42,13 +42,14 @@ async function handleBatches(req, res, url) {
 }
 // In queue mode the services report which keys they hold; this process holds none.
 function serviceConfig() {
-  if (!Backend.queue()) return { ...providerConfig(), groqConfigured: !!process.env.GROQ_API_KEY, mode: 'local' };
+  if (!Backend.queue()) return { ...providerConfig(), groqConfigured: require('./lib/key-pool.cjs').pool().hasUsable('groq') || require('./lib/key-pool.cjs').pool().hasUsable('openrouter'), mode: 'local' };
   const verify = Backend.merged('verify'), llm = Backend.merged('llm');
   return { googleBooksConfigured: !!verify.googleBooksConfigured, configured: verify.configured || {}, groqConfigured: !!(llm.groq || llm.openRouter), mode: 'queue',
     services: { verify: Backend.workers('verify').length, llm: Backend.workers('llm').length } };
 }
 
 function json(res, status, body, headers = {}) {
+  if (status >= 400) { res.errorCode = body?.code; res.errorMessage = body?.error; }
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers });
   res.end(JSON.stringify(body));
 }
@@ -64,7 +65,14 @@ function createServer({ inspectWeb = webInspect, app = null, writerStore = null 
   const hosts = allowedHosts();
   const authService = app ? createAuthService({ auth: app.auth, usage: app.usage }) : null;
   const adminService = app ? createAdminService({ app, writerStore: writerStore || (() => { try { return require('./lib/writer-store.cjs').defaultStore(); } catch { return null; } })(), wordService }) : null;
+  const Metrics = require('./lib/metrics.cjs');
   return http.createServer(async (req, res) => {
+    // Request log for the reports: one row when the response is over (or the client left early, status 499).
+    const startedAt = Number(process.hrtime.bigint()) / 1e6; Metrics.inflight.now++; Metrics.inflight.requests++;
+    res.once('close', () => {
+      Metrics.inflight.now--;
+      try { Metrics.defaultMetrics().http({ method: req.method, pathname: new URL(req.url, 'http://localhost').pathname, status: res.writableFinished ? res.statusCode : 499, durationMs: Number(process.hrtime.bigint()) / 1e6 - startedAt, userId: req.metricsUserId || null, code: res.errorCode, error: res.errorMessage }); } catch { /* metrics never break a request */ }
+    });
     const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
     if (!hosts.has(host)) return json(res, 403, { error: 'Yerel erişim gerekli' });
     // The Host was checked above; behind a container port mapping the browser's port differs from ours.
@@ -105,7 +113,7 @@ function createServer({ inspectWeb = webInspect, app = null, writerStore = null 
         return json(res, result.status, result.body, result.retryAfter ? { 'Retry-After': result.retryAfter } : {});
       }
       const files = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/pages.js': ['pages.js', 'text/javascript'], '/ui.js': ['ui.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'],
-        '/web-reference.js': ['web-reference.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/writer-app.js': ['writer-app.js', 'text/javascript'], '/auth-app.js': ['auth-app.js', 'text/javascript'], '/admin-app.js': ['admin-app.js', 'text/javascript'], '/writer-cite.js': ['writer-cite.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
+        '/web-reference.js': ['web-reference.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/writer-app.js': ['writer-app.js', 'text/javascript'], '/auth-app.js': ['auth-app.js', 'text/javascript'], '/admin-app.js': ['admin-app.js', 'text/javascript'], '/admin-reports.js': ['admin-reports.js', 'text/javascript'], '/writer-cite.js': ['writer-cite.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
       const file = files[url.pathname];
       if (!file) return json(res, 404, { error: 'Dosya bulunamadı' });
       res.writeHead(200, { 'Content-Type': `${file[1]}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -133,7 +141,9 @@ if (require.main === module) {
     const app = createApp();
     await app.auth.bootstrapAdmin();
     wordService.useUsage(app.usage);
-    wordService.useGuard(userId => { const user = app.accounts.users.byId(userId); if (user) Plans.enforce(app.auth.effectivePlan(user), 'monthlyTokens', app.usage.monthTokens(userId)); });
+    wordService.useGuard(require('./lib/word-guard.cjs')(app));
+    { const Metrics = require('./lib/metrics.cjs'); Metrics.startSampler(Metrics.defaultMetrics()); Metrics.defaultMetrics().prune(); }
+    require('./lib/scholar.cjs').configure({ key: () => app.auth.settings.scholar({ secret: true }).key });
     const purged = wordService.purgeLegacy();
     if (purged) console.log(`Hesap sistemi etkinleştirildi: sahipsiz ${purged} eski Word belgesi silindi.`);
     writerService.configure({ usage: app.usage });

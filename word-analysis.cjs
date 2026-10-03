@@ -29,7 +29,9 @@ function referenceIdentity(raw) {
   const date = new RegExp('\\(\\s*('+YEAR+')(?=\\s*[,)])','i').exec(raw);
   const y = date ? Object.assign([date[1]], {index:date.index+date[0].indexOf(date[1])}) : years(raw).find(value=>/^\d/.test(value[0]));
   const prefix = raw.slice(0, y?.index ?? raw.length).replace(/\(\s*$/, '').trim();
-  const authors = Array.from(prefix.matchAll(/(?:^|[,;&]\s*|\band\s+)([\p{L}][\p{L}'’\s-]*?),\s*[\p{Lu}](?:\.|[\p{Lu}]*(?=\s*[,;&(]|$))/gu)).map(m => m[1].trim());
+  // Initials may be spaced ("D. J."), glued ("SY.") or without periods ("DJ"); a
+  // list connector ("and", "ve", "&") belongs to the separator, not the surname.
+  const authors = Array.from(prefix.matchAll(/(?:^|[,;&]\s*|\b(?:and|ve)\s+)([\p{L}][\p{L}'’\s-]*?),\s*[\p{Lu}](?:\.|[\p{Lu}]+\.?|(?=\s*[,;&(]|$))/gu)).map(m => m[1].trim().replace(/^(?:and|ve|&)\s+/i, ''));
   if (!authors.length) authors.push(prefix.replace(/[,.(\s]+$/, ''));
   return { authors, author: authors[0], year: y ? yearKey(y[0]) : '', title: Engine.parseReference(raw).title };
 }
@@ -76,7 +78,15 @@ function narrativeAuthor(before,references) {
   // Walk the complete comma/conjunction list, retaining its first author and offsets.
   while(value){const parsed=citationAuthors(value);if(references.some(r=>r.authors.length>1&&r.authors.length===parsed.length&&r.authors.every((a,i)=>nameKey(a)===parsed[i])))break;
     const prefix=before.slice(0,before.length-value.length);const connector=prefix.match(/(?:,\s*(?:(?:and|ve|&)\s*)?|\s+(?:and|ve|&)\s*)$/);if(!connector)break;
-    const left=prefix.slice(0,connector.index);const prior=left.match(new RegExp(proper+'$','u'));if(!prior)break;value=prior[0]+connector[0]+value;
+    const left=prefix.slice(0,connector.index);const prior=left.match(new RegExp(proper+'$','u'));if(!prior)break;
+    // When the name already belongs to a listed reference, extend the list only
+    // with a name that is itself a reference author or keeps it a run of that
+    // reference's authors: a sentence opener ("Similarly, Madusanka (2016)") is not a co-author;
+    // an "and"/"ve" connector is always a list, so a misspelled co-author still joins.
+    const extended=citationAuthors(prior[0]+connector[0]+value);
+    const known=references.some(r=>r.authors.some(a=>nameKey(a)===parsed[0]));
+    if(known&&!/(?:and|ve|&)\s*$/i.test(connector[0])&&!references.some(r=>r.authors.some(a=>nameKey(a)===extended[0]))&&!references.some(r=>{const keys=r.authors.map(nameKey);return keys.some((_,i)=>extended.every((a,j)=>keys[i+j]===a));}))break;
+    value=prior[0]+connector[0]+value;
   }
   return value.replace(/^The\s+/,'');
 }
@@ -135,10 +145,14 @@ function analyze(paragraphs, references, range) {
       else if(byAuthor.length===1) { ref=byAuthor[0]; c.issue='Yıl uyuşmazlığı'; c.reviewReason='Aynı yazar farklı bir yayına veya ön baskıya ait olabilir. Yayın sürümünü seçip eşleşmeyi kabul edin.'; }
       else if(byAuthor.length>1) c.issue='Yıl eşleşmiyor; birden fazla yayın adayı var.';
       else {
-        const fuzzy = references.filter(r => r.year===c.year && c.authors[0]?.length>=5 && distance(norm(r.author),c.authors[0])===1);
-        if(fuzzy.length===1) { c.candidate=fuzzy[0].id; c.issue='Olası yazar yazım uyuşmazlığı; yayın kimliğini kontrol edin.';
+        // One-letter author typo: the year must agree, or — for a group citation —
+        // the remaining authors must match (the entry may be dated differently, e.g. n.d.).
+        const sameRest=r => c.authors.length>1 && c.authors.length===r.authors.length && c.authors.slice(1).every((a,i)=>a===nameKey(r.authors[i+1]));
+        const fuzzy = references.filter(r => (r.year===c.year || sameRest(r)) && c.authors[0]?.length>=5 && distance(norm(r.author),c.authors[0])===1);
+        if(fuzzy.length===1) { c.candidate=fuzzy[0].id; matched.add(fuzzy[0].id); c.issue='Olası yazar yazım uyuşmazlığı; yayın kimliğini kontrol edin.';
           const suffix=c.authorText.match(/\s+(?:et\s+al\.|vd\.|ve\s+ark\.?|ve\s+diğerleri)\s*$/i)?.[0]||'';
-          c.patch={paragraph:p.id,start:c.authorStart,end:c.authorEnd,original:c.authorText,replacement:fuzzy[0].author+suffix}; }
+          if(fuzzy[0].year!==c.year)c.reviewReason=`Kaynakçadaki kayıt ${fuzzy[0].year||'tarihsiz'} yılıyla yer alıyor; metin içi yılı (${c.year}) da kontrol edin.`;
+          c.patch={paragraph:p.id,start:c.authorStart,end:c.authorEnd,original:c.authorText,replacement:c.authors.length>1&&c.authors.length===fuzzy[0].authors.length&&!suffix?c.authorText.replace(new RegExp('^'+escaped(c.authorText.split(/\s*(?:,|&|ve|and)\s*/)[0])),fuzzy[0].author):fuzzy[0].author+suffix}; }
         else c.issue='Kaynakçası olmayan atıf';
       }
       if(ref) {

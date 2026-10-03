@@ -3,7 +3,8 @@ import sys, json, io, zipfile, base64, re, copy
 import xml.etree.ElementTree as ET
 sys.stdin.reconfigure(encoding='utf-8')
 
-LIMIT = 20 * 1024 * 1024
+DEFAULT_LIMIT = 20 * 1024 * 1024
+LIMIT = DEFAULT_LIMIT
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 ET.register_namespace('w', W[1:-1])
 ET.register_namespace('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships')
@@ -340,11 +341,11 @@ def build_docx(blocks):
         z.writestr('word/document.xml', document); z.writestr('word/styles.xml', styles_xml); z.writestr('word/_rels/document.xml.rels', doc_rels)
     return out.getvalue()
 
-def main():
+def main(request=None):
     global LIMIT
-    request = json.load(sys.stdin)
+    if request is None: request = json.load(sys.stdin)
     # The writing assistant raises the limit to the user's plan; word checks keep the 20 MB default.
-    LIMIT = min(max(int(request.get('limit') or LIMIT), 1), 200 * 1024 * 1024)
+    LIMIT = min(max(int(request.get('limit') or DEFAULT_LIMIT), 1), 200 * 1024 * 1024)
     data = base64.b64decode(request['data'], validate=True)
     if request['operation'] == 'pdf':
         from pypdf import PdfReader
@@ -374,7 +375,24 @@ def main():
     elif request['operation'] == 'export':
         print(json.dumps({'data': base64.b64encode(apply(z, request['patches'])).decode('ascii')}))
 
+def serve():
+    """Long-lived mode: one JSON request per line on stdin, one JSON answer per line on stdout (see lib/python.cjs)."""
+    import contextlib
+    out = sys.stdout
+    for line in sys.stdin:
+        line = line.strip()
+        if not line: continue
+        buffer = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buffer): main(json.loads(line))
+            text = buffer.getvalue().strip().replace('\n', ' ')
+        except Exception as e:
+            text = json.dumps({'error': str(e) if isinstance(e, ValueError) else 'Dosya işlenemedi; biçimi veya bütünlüğünü kontrol edin.'})
+        out.write((text or json.dumps({'error': 'Dosya işlenemedi; biçimi veya bütünlüğünü kontrol edin.'})) + '\n'); out.flush()
+
 if __name__ == '__main__':
-    try: main()
-    except Exception as e:
-        print(json.dumps({'error': str(e) if isinstance(e, ValueError) else 'Dosya işlenemedi; biçimi veya bütünlüğünü kontrol edin.'})); sys.exit(1)
+    if len(sys.argv) > 1 and sys.argv[1] == '--serve': serve()
+    else:
+        try: main()
+        except Exception as e:
+            print(json.dumps({'error': str(e) if isinstance(e, ValueError) else 'Dosya işlenemedi; biçimi veya bütünlüğünü kontrol edin.'})); sys.exit(1)

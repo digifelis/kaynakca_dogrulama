@@ -177,40 +177,41 @@
           <span id="wr-plan" class="wr-badge"></span><span id="wr-usage" class="wr-muted"></span>
           <span class="action-spacer" aria-hidden="true"></span>
           <details class="wr-privacy"><summary>Gizlilik ve veri</summary>
-            <p>Yüklediğiniz kaynakların metni, anlamsal arama için Google Gemini’ye (embedding) ve cevap üretmek için Groq/OpenRouter’a gönderilir. Kaynaklarınız ve makaleniz yalnız sizin projenizde saklanır; projeyi veya kaynağı sildiğinizde parçaları ve vektörleri de silinir.</p>
+            <p>Yüklediğiniz kaynakların metni, anlamsal arama için Google Gemini’ye (embedding) ve cevap üretmek için Groq/OpenRouter’a gönderilir. Koleksiyonda makale ararsanız anahtar kelimeleriniz Semantic Scholar’a gönderilir ve seçtiğiniz açık erişimli PDF’ler sunucumuz tarafından indirilip aynı yolla işlenir. Kaynaklarınız ve makaleniz yalnız sizin hesabınızda saklanır; kaynağı veya koleksiyonu sildiğinizde parçaları ve vektörleri de silinir.</p>
           </details>
         </div>
         <p id="wr-status" class="status-message" role="status" aria-live="polite"></p>
-        <div class="wr-grid">
-          <aside class="wr-side" aria-label="Projeler ve kaynaklar">
-            <div class="wr-block">
-              <h3>Proje</h3>
-              <div class="wr-row"><select id="wr-project" aria-label="Proje"></select></div>
-              <form id="wr-title-form" class="wr-row" hidden><input id="wr-title-input" type="text" maxlength="120" aria-label="Proje adı" placeholder="Proje adı"><button class="copy-button btn-primary" type="submit">Kaydet</button><button id="wr-title-cancel" class="text-button btn-quiet" type="button">Vazgeç</button></form>
-              <div class="wr-row"><button id="wr-new" class="copy-button btn-secondary" type="button">Yeni proje</button><button id="wr-rename" class="text-button btn-quiet" type="button">Adını değiştir</button><button id="wr-delete" class="text-button btn-danger" type="button">Projeyi sil</button></div>
+        <nav class="wr-tabs" aria-label="Yazım yardımcısı bölümleri">
+          <a id="wr-tab-write" class="wr-tab" href="#/yazim">Makale yazımı</a>
+          <a id="wr-tab-collections" class="wr-tab" href="#/yazim/koleksiyonlar">Kaynak koleksiyonları <span id="wr-collections-count" class="wr-count"></span></a>
+        </nav>
+
+        <div id="wr-view-write" class="wr-view">
+          <div class="wr-block wr-project-bar">
+            <div class="wr-row wr-project-row">
+              <label class="wr-field wr-project-select">Proje<select id="wr-project" aria-label="Proje"></select></label>
+              <label class="wr-field wr-language">Makale dili<select id="wr-language" aria-label="Makale dili"><option value="tr">Türkçe</option><option value="en">English</option></select></label>
+              <button id="wr-new" class="copy-button btn-secondary" type="button">Yeni proje</button><button id="wr-rename" class="text-button btn-quiet" type="button">Adını değiştir</button><button id="wr-delete" class="text-button btn-danger" type="button">Projeyi sil</button>
             </div>
-            <div class="wr-block">
-              <h3>Kaynaklar</h3>
-              <label class="wr-check"><input id="wr-consent" type="checkbox"> Kaynak metinlerinin yukarıda açıklanan dış servislere gönderilmesini kabul ediyorum.</label>
-              <div class="upload-zone wr-upload">
-                <input id="wr-upload" type="file" multiple disabled accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" aria-describedby="wr-upload-hint">
-                <span class="upload-icon" aria-hidden="true"></span>
-                <span class="upload-copy"><strong>PDF veya Word kaynak ekleyin</strong><span id="wr-upload-hint">Birden fazla dosya seçebilirsiniz.</span></span>
-                <span class="upload-button" aria-hidden="true">Dosya seç</span>
-              </div>
-              <div id="wr-sources" class="wr-sources"></div>
-            </div>
-          </aside>
+            <form id="wr-title-form" class="wr-row" hidden><input id="wr-title-input" type="text" maxlength="120" aria-label="Proje adı" placeholder="Proje adı"><button class="copy-button btn-primary" type="submit">Kaydet</button><button id="wr-title-cancel" class="text-button btn-quiet" type="button">Vazgeç</button></form>
+          </div>
+          <section class="wr-block wr-picker" aria-label="Bu projede kullanılacak koleksiyonlar">
+            <div class="wr-head"><h3>Bu projede kullanılacak koleksiyonlar</h3><a class="wr-link" href="#/yazim/koleksiyonlar">Koleksiyonları yönet →</a></div>
+            <div id="wr-picker" class="wr-chips"></div>
+            <p id="wr-picker-hint" class="wr-muted"></p>
+          </section>
+          <div class="wr-grid">
           <section class="wr-chat" aria-label="Soru ve cevap">
             <div id="wr-messages" class="wr-messages" aria-live="polite"></div>
             <form id="wr-form" class="wr-form">
               <div class="wr-row"><label class="wr-field">Skill <select id="wr-skill"></select></label><label class="wr-check"><input id="wr-use-draft" type="checkbox"> Makaleyi bağlam olarak kullan</label></div>
               <p id="wr-suggestion" class="wr-muted" hidden></p>
-              <textarea id="wr-question" rows="3" maxlength="4000" aria-label="Sorunuz" placeholder="Kaynaklarınıza sorunuzu yazın (Ctrl+Enter ile gönderin)"></textarea>
+              <textarea id="wr-question" rows="3" maxlength="4000" aria-label="Sorunuz" placeholder="Seçtiğiniz koleksiyonlardaki kaynaklara sorunuzu yazın (Ctrl+Enter ile gönderin)"></textarea>
               <div class="wr-row"><button id="wr-ask" class="copy-button btn-primary" type="submit">Sor</button><button id="wr-clear" class="text-button btn-quiet" type="button">Sohbeti temizle</button></div>
             </form>
           </section>
           <section class="wr-doc" aria-label="Makale">
+            <div class="wr-doc-head"><h3>Makale</h3><span class="wr-muted">Cevaplardaki “Editöre ekle” ile metin ekleyin veya doğrudan yazın; atıflar kaynakçaya otomatik girer.</span></div>
             <div class="wr-toolbar" role="toolbar" aria-label="Biçim">
               <button type="button" data-wr-cmd="h1" title="Başlık 1">B1</button><button type="button" data-wr-cmd="h2" title="Başlık 2">B2</button><button type="button" data-wr-cmd="h3" title="Başlık 3">B3</button>
               <button type="button" data-wr-cmd="p" title="Paragraf">¶</button><button type="button" data-wr-cmd="bold" title="Kalın"><b>K</b></button><button type="button" data-wr-cmd="italic" title="İtalik"><i>İ</i></button>
@@ -224,6 +225,48 @@
               <button id="wr-bib-insert" class="copy-button btn-secondary" type="button">Kaynakçayı metne ekle</button>
             </details>
           </section>
+          </div>
+        </div>
+
+        <div id="wr-view-collections" class="wr-view" hidden>
+          <div class="wr-collections">
+            <aside class="wr-block wr-collection-list" aria-label="Koleksiyonlarım">
+              <h3>Koleksiyonlarım</h3>
+              <form id="wr-collection-new" class="wr-new-collection"><input id="wr-collection-name" type="text" maxlength="120" aria-label="Yeni koleksiyon adı" placeholder="Yeni koleksiyon adı"><input id="wr-collection-keywords" type="text" maxlength="200" aria-label="Anahtar kelimeler (isteğe bağlı)" placeholder="Anahtar kelimeler (isteğe bağlı): makale aransın"><button class="copy-button btn-primary" type="submit">Oluştur</button></form>
+              <ul id="wr-collection-items" class="wr-collection-items"></ul>
+            </aside>
+            <section class="wr-block wr-collection-detail" aria-label="Koleksiyon">
+              <p id="wr-collection-empty" class="wr-muted wr-empty">Bir koleksiyon oluşturun veya soldan seçin. Koleksiyon, makalelerinizde birlikte kullanacağınız PDF ve Word kaynaklarının adlı bir grubudur; bir projede istediğiniz koleksiyonları seçersiniz.</p>
+              <div id="wr-collection-body" hidden>
+                <div class="wr-head"><h3 id="wr-collection-title"></h3>
+                  <span class="wr-row"><button id="wr-collection-rename" class="text-button btn-quiet" type="button">Adını değiştir</button><button id="wr-collection-delete" class="text-button btn-danger" type="button">Koleksiyonu sil</button></span></div>
+                <form id="wr-collection-rename-form" class="wr-row" hidden><input id="wr-collection-rename-input" type="text" maxlength="120" aria-label="Koleksiyon adı"><button class="copy-button btn-primary" type="submit">Kaydet</button><button id="wr-collection-rename-cancel" class="text-button btn-quiet" type="button">Vazgeç</button></form>
+                <label class="wr-check"><input id="wr-consent" type="checkbox"> Kaynak metinlerinin yukarıda açıklanan dış servislere gönderilmesini kabul ediyorum.</label>
+                <div class="upload-zone wr-upload">
+                  <input id="wr-upload" type="file" multiple disabled accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" aria-describedby="wr-upload-hint">
+                  <span class="upload-icon" aria-hidden="true"></span>
+                  <span class="upload-copy"><strong>PDF veya Word kaynak ekleyin</strong><span id="wr-upload-hint">Birden fazla dosya seçebilirsiniz.</span></span>
+                  <span class="upload-button" aria-hidden="true">Dosya seç</span>
+                </div>
+                <details id="wr-search" class="wr-search">
+                  <summary>Semantic Scholar’da makale ara ve koleksiyona ekle</summary>
+                  <form id="wr-search-form" class="wr-row">
+                    <input id="wr-search-q" type="text" maxlength="200" aria-label="Anahtar kelimeler" placeholder="Anahtar kelimeler (virgülle ayırabilirsiniz)">
+                    <button class="copy-button btn-primary" type="submit">Ara</button>
+                  </form>
+                  <label class="wr-check"><input id="wr-search-oa" type="checkbox" checked> Yalnız açık erişimli PDF’i olan makaleleri göster (yalnız bunlar eklenebilir)</label>
+                  <p id="wr-search-note" class="wr-muted" role="status"></p>
+                  <div id="wr-search-actions" class="wr-row" hidden>
+                    <label class="wr-check"><input id="wr-search-all" type="checkbox"> Tümünü seç</label>
+                    <button id="wr-search-import" class="copy-button btn-primary" type="button" disabled>Seçilenleri koleksiyona ekle</button>
+                  </div>
+                  <ul id="wr-search-results" class="wr-papers"></ul>
+                  <button id="wr-search-more" class="copy-button btn-secondary" type="button" hidden>Daha fazla sonuç</button>
+                </details>
+                <div id="wr-sources" class="wr-sources"></div>
+              </div>
+            </section>
+          </div>
         </div>
       </section>
       </div>
@@ -286,6 +329,7 @@
             <p id="results-subtitle">Her kayıt için eşleşme ve değişiklikleri göreceksiniz.</p>
           </div>
           <div class="summary-stats" id="summary-stats"></div>
+          <button id="retry-button" class="result-action hidden" type="button">Hatalı ve bekleyenleri yeniden sorgula</button>
         </div>
         <div id="result-list" class="result-list"></div>
       </section>
@@ -318,6 +362,7 @@
     <script src="writer-cite.js" defer></script>
     <script src="writer-app.js" defer></script>
     <script src="auth-app.js" defer></script>
+    <script src="admin-reports.js" defer></script>
     <script src="admin-app.js" defer></script>
     <script src="pages.js" defer></script>
     <script src="ui.js" defer></script>

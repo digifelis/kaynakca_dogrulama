@@ -2,7 +2,7 @@
   const pages = {
     kaynakca: { title: 'Kaynakça doğrulama', heading: 'Kaynakçanızı doğrulayın.', description: 'Kaynak listenizi yapıştırın, akademik kayıtlarla karşılaştırın ve düzeltilmiş APA 7 çıktısını alın.' },
     word: { title: 'Yetim Kaynak kontrolü', heading: 'Makalenizdeki atıfları denetleyin.', description: 'Word veya PDF dosyanızı yükleyin. Kaynakça eşleşmelerini, yetim atıfları ve yazar–yıl uyuşmazlıklarını inceleyin.' },
-    yazim: { title: 'Yazım yardımcısı', heading: 'Kaynaklarınızla makale yazın.', description: 'PDF veya Word kaynaklarınızı yükleyin, sorularınızı kaynaklara dayanarak yanıtlatın ve cevapları kademe kademe makalenize ekleyin.' },
+    yazim: { title: 'Yazım yardımcısı', heading: 'Kaynaklarınızla makale yazın.', description: 'Kaynaklarınızı adlandırdığınız koleksiyonlarda toplayın; bir projede istediğiniz koleksiyonları seçip sorularınızı kaynaklara dayanarak yanıtlatın ve cevapları kademe kademe makalenize ekleyin.' },
     giris: { title: 'Giriş', heading: 'Hesabınıza giriş yapın.', description: 'Yazım yardımcısı, Word ve içerik kontrolü kişisel hesabınızla çalışır.' },
     profil: { title: 'Profil', heading: 'Hesabınız.', description: 'Profil bilgileriniz, paketiniz ve token kullanımınız.' },
     admin: { title: 'Yönetim paneli', heading: 'Yönetim paneli.', description: 'Kullanıcılar, paketler, işlemler ve ayarlar.' },

@@ -48,17 +48,30 @@
       .replace(/\s+/g, ' ').trim();
   }
 
+  const BARE_ID = /^(?:(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)?10\.\d{4,9}\/\S+|(?:https?:\/\/(?:export\.)?arxiv\.org\/(?:abs|pdf)\/|arxiv\s*:\s*)\S+)$/i;
+
   function splitReferences(text) {
     const lines = String(text).replace(/\r/g, '').trim().split('\n');
     const records = [];
     let current = [];
+    let currentIsId = false;
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) {
         if (current.length) records.push(current.join(' '));
         current = [];
+        currentIsId = false;
         continue;
       }
+      // A line holding only a DOI/arXiv identifier is its own record, unless it
+      // wraps the end of a reference that is still being collected.
+      if (BARE_ID.test(trimmed) && (!current.length || currentIsId)) {
+        if (current.length) records.push(current.join(' '));
+        current = [trimmed];
+        currentIsId = true;
+        continue;
+      }
+      if (currentIsId && current.length) { records.push(current.join(' ')); current = []; currentIsId = false; }
       const numbered = /^(?:\[\d+\]|\d+[.)])\s+/.test(trimmed);
       const authorStart = /^(?:(?:van|von|de|der|den)\s+)*[\p{Lu}][\p{L}'’–-]+(?:\s+[\p{L}'’–-]+){0,2},\s*(?:[\p{Lu}]\.|[\p{Lu}][\p{Ll}])/u.test(trimmed);
       const vancouverStart = /^[\p{Lu}][\p{L}'’–-]+\s+[A-Z]{1,4}(?:[,\s]|\.)/u.test(trimmed);
@@ -85,7 +98,11 @@
     const arxiv = reference.match(/(?:arxiv\s*:\s*|arxiv\.org\/(?:abs|pdf)\/|10\.48550\/arxiv\.)([a-z]+[-\w]*\/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?/i)?.[1];
     const doi = getDoi(reference) || (arxiv ? `10.48550/arxiv.${arxiv}` : '');
     const withoutDoi = reference.replace(/(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)?10\.\d{4,9}\/\S+/i, '').trim();
-    const yearMatch = withoutDoi.match(/\b(?:18|19|20)\d{2}(?=[a-z]?\b)/i);
+    // A publication year stands alone — "(2025)", "2025.", "2025;" — whereas a
+    // year inside a proceedings name ("Proceedings of the 2025 Conference…")
+    // would make the container look like the title. Prefer the delimited one.
+    const yearMatch = withoutDoi.match(/\b(?:18|19|20)\d{2}(?=[a-z]?\s*(?:[).,;:]|$))/i)
+      || withoutDoi.match(/\b(?:18|19|20)\d{2}(?=[a-z]?\b)/i);
     const year = yearMatch ? Number(yearMatch[0]) : null;
     let yearEnd = yearMatch ? yearMatch.index + yearMatch[0].length : -1;
     if(yearMatch){const date=withoutDoi.slice(0,yearMatch.index).match(/\(\s*$/);if(date){const close=withoutDoi.indexOf(')',yearEnd);if(close>=0&&close-yearEnd<65)yearEnd=close+1;}}
@@ -112,7 +129,11 @@
     const firstAuthor = authorPrefix.includes(',') && !/^[\p{L}'’–-]+\s+[A-Z]{1,4},/u.test(authorPrefix)
       ? authorPrefix.split(',')[0].trim()
       : authorPrefix.match(/^([\p{L}'’–-]+)\s+[A-Z]{1,4}(?:\s|[,\.])/u)?.[1] || authorPrefix.match(/^([\p{L}'’–-]+)/u)?.[1] || '';
-    return { reference, year, doi, title, firstAuthor, arxiv: arxiv || '' };
+    // Only an identifier was given (DOI, doi.org link, arXiv number or link):
+    // the record itself is the source of title, authors and year.
+    const leftover = reference.replace(/\[[^\]]*\]\(\S+?\)|https?:\/\/\S+|\b10\.\d{4,9}\/\S+|\b(?:doi|arxiv)\b\s*:?|arxiv:\s*\S+/gi, ' ');
+    const idOnly = !!(doi || arxiv) && !/\p{L}{2,}/u.test(leftover);
+    return { reference, year, doi, title, firstAuthor, arxiv: arxiv || '', idOnly };
   }
 
   function titleScore(a, b) {
@@ -128,14 +149,29 @@
   }
 
   function rankCandidate(parsed, item) {
-    const titleMatch = titleScore(parsed.title, item.title);
+    if (parsed.idOnly) {
+      // The identifier is the evidence; there is no cited text to compare.
+      const doiMatch = parsed.doi === (item.doi || '').toLowerCase();
+      return { ...item, titleMatch: doiMatch ? 1 : 0, authorMatch: doiMatch, yearMatch: doiMatch, doiMatch, score: doiMatch ? 100 : 0 };
+    }
+    const doiMatch = !!parsed.doi && parsed.doi === (item.doi || '').toLowerCase();
+    let titleMatch = titleScore(parsed.title, item.title);
+    if (doiMatch) {
+      // The DOI already identifies the record, so a title parsed imperfectly
+      // (container mistaken for title, truncated or abbreviated title) must not
+      // reject it: accept the registered title appearing anywhere in the
+      // reference, or the cited title being the beginning of the registered one.
+      const registered = normalizeTitle(item.title);
+      const cited = normalizeTitle(parsed.title);
+      const whole = normalizeTitle(parsed.reference);
+      if ((registered.split(' ').length >= 3 && ` ${whole} `.includes(` ${registered} `)) || (cited && registered.startsWith(`${cited} `))) titleMatch = 1;
+    }
     const authorMatch = !!parsed.firstAuthor && item.author.some(author => {
       const name = normalizeTitle(author.family || author.literal);
       const wanted = normalizeTitle(parsed.firstAuthor);
       return name === wanted || (` ${name} `).includes(` ${wanted} `);
     });
     const yearMatch = !!parsed.year && parsed.year === item.year;
-    const doiMatch = !!parsed.doi && parsed.doi === (item.doi || '').toLowerCase();
     return { ...item, titleMatch, authorMatch, yearMatch, doiMatch,
       score: Math.round(titleMatch * 60 + (authorMatch ? 20 : 0) + (yearMatch ? 10 : 0) + (doiMatch ? 10 : 0)) };
   }
@@ -220,10 +256,21 @@
     return job;
   }
 
+  // The year of a Crossref record: the issue's own date first (an article put
+  // online in December 2022 but belonging to the January 2023 issue is a 2023
+  // article), then the work's published-online, published-print, issued and
+  // created dates. No date at all stays null and is written as t.y.
+  function crossrefYear(raw) {
+    const dates = [raw['journal-issue']?.['published-online'], raw['journal-issue']?.['published-print'],
+      raw['published-online'], raw['published-print'], raw.issued, raw.created, raw.published];
+    for (const date of dates) { const year = date?.['date-parts']?.[0]?.[0]; if (year) return year; }
+    return null;
+  }
+
   function fromCrossref(raw) {
-    return { title: raw.title?.[0] || '', author: raw.author || [],
+    return { title: raw.title?.[0] || '', author: (raw.author || []).map(person => person.family || person.literal || !person.name ? person : { literal: person.name }),
       language: raw.language || '',
-      year: raw.published?.['date-parts']?.[0]?.[0] || raw.issued?.['date-parts']?.[0]?.[0] || null,
+      year: crossrefYear(raw),
       doi: raw.DOI || '', containerTitle: raw['container-title']?.[0] || '',
       volume: raw.volume || '', issue: raw.issue || '', pages: raw.page || '',
       publisher: raw.publisher || '', editor: raw.editor || [], type: raw.type || '',
@@ -254,12 +301,13 @@
     provider: 'DataCite', url: `https://doi.org/${raw.doi || parsed.doi}` }];
   }
 
-  async function openAlexSearch(parsed) {
+  async function openAlexSearch(parsed, directOnly = false) {
     const base = 'https://api.openalex.org/works';
     if (parsed.doi) {
       const direct = await requestJson('OpenAlex', `${base}?filter=doi:${encodeURIComponent(`https://doi.org/${parsed.doi}`)}&per-page=1`);
       if (direct?.results?.length) return direct.results.map(fromOpenAlex);
     }
+    if (directOnly) return [];
     const data = await requestJson('OpenAlex', `${base}?search=${encodeURIComponent(parsed.title || parsed.reference)}&per-page=5`);
     return (data?.results || []).map(fromOpenAlex);
   }
@@ -311,7 +359,7 @@
     const parts = [];
     const add = (text, italic = false) => { if (text) parts.push({ text, italic }); };
     add(`${authors} (${item.year || 't.y.'}). `);
-    const title = sentenceCase(item.title, item.language, item.properNouns);
+    const title = item.keepTitle ? String(item.title || '').trim().replace(/[.]+$/, '') : sentenceCase(item.title, item.language, item.properNouns);
     add(title, item.type === 'book');
     add(/[.!?]$/.test(title) ? '' : '.');
     if (item.type === 'book') {
@@ -348,6 +396,15 @@
       return `${author.family || ''}${initials ? `, ${initials}` : ''}`;
     }).filter(Boolean);
     const authors = bibliographyAuthors(names, item);
+    // Articles and conference papers are cited as Crossref's own APA output does:
+    // title as registered, then "Container, volume(issue), pages." — the
+    // publisher belongs only to books/reports without a container.
+    if (item.containerTitle && ['journal-article', 'proceedings-article'].includes(item.type)) {
+      const pages = decodeText(item.pages).replace(/(\d)\s*[-‐‑‒–]+\s*(\d)/g, '$1–$2');
+      const title = decodeText(item.title).replace(/[.]+$/, '');
+      const locator = [item.volume ? `${item.volume}${item.issue ? `(${item.issue})` : ''}` : (item.issue ? `(${item.issue})` : ''), pages].filter(Boolean).join(', ');
+      return `${authors} (${item.year || 't.y.'}). ${title}${/[?!]$/.test(title) ? '' : '.'} ${decodeText(item.containerTitle)}${locator ? `, ${locator}` : ''}.${item.doi ? ` https://doi.org/${item.doi}` : ''}`;
+    }
     const title = crossrefTitleCase(item.title);
     const publisher = item.publisher || item.containerTitle || '';
     const editor = item.editor?.length ? item.editor.map(author => author.family || author.name || '').filter(Boolean).join(', ') : '';
@@ -360,6 +417,26 @@
     return apaParts(item).map(part => part.italic ? `<em>${escape(part.text)}</em>` : escape(part.text)).join('');
   }
 
+  const decodeText = value => {
+    let text = String(value || '').replace(/<[^>]+>/g, '');
+    for (let pass = 0; pass < 3 && /&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/i.test(text); pass++) {
+      text = text.replace(/&(amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/gi, (_, code) => {
+        const key = code.toLowerCase();
+        if (key[0] !== '#') return { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }[key];
+        return String.fromCodePoint(key[1] === 'x' ? parseInt(key.slice(2), 16) : parseInt(key.slice(1), 10));
+      });
+    }
+    return text.replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim();
+  };
+  // A record found by identifier is formatted as registered: title kept as
+  // published, markup removed, page ranges with an en dash.
+  function registryItem(item) {
+    const out = { ...item, keepTitle: true, title: decodeText(item.title), containerTitle: decodeText(item.containerTitle),
+      pages: decodeText(item.pages).replace(/(\d)\s*[-‐‑‒–]+\s*(\d)/g, '$1–$2') };
+    if (item.arxiv) Object.assign(out, { type: '', containerTitle: 'ArXiv', volume: '', issue: '', pages: `abs/${item.arxiv}`, doi: '' });
+    return out;
+  }
+
   function errorDescription(error) {
     if (error.status === 429) return `${error.provider}: sorgu kotası/hız sınırı (HTTP 429)`;
     if (error.status === 401 || error.status === 403) return `${error.provider}: erişim reddedildi (HTTP ${error.status})`;
@@ -367,7 +444,8 @@
   }
 
   async function verifyReference(reference, settings = {}) {
-    const webInput = web?.parse(reference);
+    const parsed = parseReference(reference);
+    const webInput = parsed.arxiv ? null : web?.parse(reference);
     if (webInput && !getDoi(reference)) {
       if (!options.proxyUrl) return web.compare(reference, { state: 'blocked', reason: 'Web doğrulaması için yerel sunucuyu node server.cjs ile başlatın.' });
       checkAbort(options.signal);
@@ -387,7 +465,6 @@
         return web.compare(reference, { state: 'blocked', reason: error.name === 'AbortError' ? 'Web isteği zaman aşımına uğradı; özgün kayıt korundu.' : 'Web sayfası alınamadı; özgün kayıt korundu.' });
       } finally { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); }
     }
-    const parsed = parseReference(reference);
     const candidates = [];
     const errors = [];
     const sourcesChecked = [];
@@ -426,6 +503,10 @@
         await attempt('Crossref', () => crossrefSearch(parsed, true));
         if (!primaryUnavailable && !isStrong(ranked()[0]) && !crossrefFound()) await attempt('DataCite', () => dataciteLookup(parsed));
       }
+      if (parsed.idOnly) {
+        // No cited text to search with: only direct identifier lookups apply.
+        if (!primaryUnavailable && !isStrong(ranked()[0])) await attempt('OpenAlex', () => openAlexSearch(parsed, true));
+      } else {
       // Missing/wrong DOI must not prevent a title search.
       if (!primaryUnavailable && !isStrong(ranked()[0]) && !crossrefFound()) await attempt('Crossref', () => crossrefSearch(parsed));
       if (!primaryUnavailable && !settings.primaryOnly && !isStrong(ranked()[0]) && !crossrefFound()) await attempt('OpenAlex', () => openAlexSearch(parsed));
@@ -436,6 +517,7 @@
           if (isStrong(ranked()[0])) break;
         }
       }
+      }
     }
     const best = ranked()[0];
     const warnings = errors.map(errorDescription);
@@ -445,9 +527,16 @@
       const technical = warnings.length > 0;
       return { ...routing, raw: reference, status: technical ? 'error' : 'failed', statusText: technical ? 'Kontrol tamamlanamadı' : 'Bulunamadı',
         score: best?.score || 0, corrected: reference, provider: technical ? 'Servis hatası' : sourcesChecked.join(' / '), changes: [], warnings, sourcesChecked,
-        reason: technical ? `${warnings.join('; ')}.${primaryUnavailable ? ' Crossref geçici olarak erişilemiyor; ek kaynak sorguları bu nedenle başlatılmadı.' : ''} Kaynak özgün haliyle korundu; tekrar deneyebilirsiniz.` : (parsed.title ? 'Yeterince güçlü bir akademik eşleşme bulunamadı. Kaynak özgün haliyle korundu.' : 'Başlık ayrıştırılamadı ve yeterli eşleşme bulunamadı. Kaynağın yazımını kontrol edin.'), debugRequests };
+        reason: technical ? `${warnings.join('; ')}.${primaryUnavailable ? ' Crossref geçici olarak erişilemiyor; ek kaynak sorguları bu nedenle başlatılmadı.' : ''} Kaynak özgün haliyle korundu; tekrar deneyebilirsiniz.` : (parsed.idOnly ? 'Bu tanımlayıcıyla kayıt bulunamadı. DOI veya arXiv numarasını kontrol edin.' : parsed.title ? 'Yeterince güçlü bir akademik eşleşme bulunamadı. Kaynak özgün haliyle korundu.' : 'Başlık ayrıştırılamadı ve yeterli eşleşme bulunamadı. Kaynağın yazımını kontrol edin.'), debugRequests };
     }
     const status = isStrong(best) ? 'verified' : 'review';
+    if (parsed.idOnly) {
+      const formatted = registryItem(best);
+      return { ...routing, raw: reference, status, statusText: 'Doğrulandı', score: best.score,
+        corrected: formatApa(formatted), correctedHtml: formatApaHtml(formatted), suggested: formatApa(formatted), suggestedHtml: formatApaHtml(formatted), crossrefApa: null,
+        matched: best, provider: best.provider, url: best.url, changes: ['Künye kayıt verisinden oluşturuldu'], warnings, sourcesChecked,
+        reason: `${best.provider} kaydı ${parsed.arxiv ? 'arXiv numarası' : 'DOI'} ile bulundu; künye kayıt verisinden oluşturuldu.` };
+    }
     const changes = [];
     if (parsed.year && best.year && parsed.year !== best.year) changes.push(`Yıl ${parsed.year} → ${best.year}`);
     if (best.doi && parsed.doi !== best.doi.toLowerCase()) changes.push(parsed.doi ? 'DOI farklı' : 'DOI bulundu');

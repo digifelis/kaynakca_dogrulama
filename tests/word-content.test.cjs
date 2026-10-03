@@ -1,5 +1,5 @@
 const test=require('node:test');const assert=require('node:assert/strict');const vm=require('node:vm');const fs=require('node:fs');const path=require('node:path');
-function fixture(handler,env={}){let now=100000,calls=0;const urls=[];const context={require:id=>require(id.startsWith('./')?path.join(__dirname,'..',id):id),module:{exports:{}},process:{env:{GROQ_API_KEY:'test-only',GROQ_MODEL:'openai/gpt-oss-120b',...env}},URL,Buffer,AbortSignal,
+function fixture(handler,env={}){let now=100000,calls=0;const urls=[];const context={require:id=>require(id.startsWith('./')?path.join(__dirname,'..',id):id),module:{exports:{}},process:{env:{GROQ_API_KEY:'test-only',GROQ_MODEL:'openai/gpt-oss-120b',CONTENT_SCREENING:'false',...env}},URL,Buffer,AbortSignal,
  Date:{now:()=>now,parse:Date.parse},setTimeout:(fn,ms)=>{now+=ms;queueMicrotask(fn);},fetch:async(url,options)=>{calls++;urls.push(url);return handler(calls,now,options,url);}};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../word-content.cjs'),'utf8'),context);return {api:context.module.exports,urls,get calls(){return calls;},get now(){return now;}};}
 const citation={sentence:'Çalışmaya 120 yetişkin katıldı.',context:['Önceki cümle.','Çalışmaya 120 yetişkin katıldı.']};
@@ -130,4 +130,68 @@ test('retrieval terms match Turkish decimal commas, stems and ignore citation ye
  const passages=[{id:'P1',text:'Introduction text.'},{id:'P2',text:'Engagement rose by 42.5% among participants in 2021.'},{id:'P3',text:'Participants were adults.'}];
  const ranked=f.api.rankPassages(passages,f.api.queryWeights({sentence:'Katılımcılarda bağlılık %42,5 arttı (Smith, 2021).',context:[]}));
  assert.equal(ranked[0].passage.id,'P2');assert.equal(f.api.language('Bu çalışma ve bir yöntem için'),'tr');assert.equal(f.api.language('The method of the study'),'en');
+});
+test('a refused Groq key hands the same request to the next key without waiting',async()=>{
+ const used=[];const f=fixture((calls,now,options)=>{used.push(options.headers.Authorization);return used.length===1?new Response('{}',{status:429,headers:{'retry-after':'90'}}):response([{claim:'120 yetişkin',verdict:'supported',passage:'P1',quote:'Çalışmada 120 yetişkin incelendi.'}]);},{GROQ_API_KEY:'groq-key-one-aaaa,groq-key-two-bbbb',OPENROUTER_API_KEY:''});
+ const waits=[];const started=f.now;const result=await f.api.evaluate(citation,publication,new AbortController().signal,t=>waits.push(t));
+ assert.equal(result.verdict,'supported');assert.deepEqual(used,['Bearer groq-key-one-aaaa','Bearer groq-key-two-bbbb']);assert.equal(waits.length,0);assert.equal(f.now,started,'no quota wait was needed');
+});
+test('a 401 marks the key invalid and the request continues with the next key',async()=>{
+ const used=[];const f=fixture((calls,now,options)=>{used.push(options.headers.Authorization);return used.length===1?new Response('{}',{status:401}):response([{claim:'120 yetişkin',verdict:'supported',passage:'P1',quote:'Çalışmada 120 yetişkin incelendi.'}]);},{GROQ_API_KEY:'groq-key-one-aaaa,groq-key-two-bbbb',OPENROUTER_API_KEY:''});
+ const result=await f.api.evaluate(citation,publication,new AbortController().signal,()=>{});
+ assert.equal(result.verdict,'supported');assert.deepEqual(used,['Bearer groq-key-one-aaaa','Bearer groq-key-two-bbbb']);
+ await f.api.evaluate(citation,publication,new AbortController().signal,()=>{});assert.equal(used.at(-1),'Bearer groq-key-two-bbbb','the refused key is not tried again');
+});
+test('when every key rests the earliest one is waited for, and usage is reported per key',async()=>{
+ const f=fixture((calls)=>calls<3?new Response('{}',{status:429,headers:{'retry-after':String(calls===1?90:30)}}):response([{claim:'120 yetişkin',verdict:'supported',passage:'P1',quote:'Çalışmada 120 yetişkin incelendi.'}]),{GROQ_API_KEY:'groq-key-one-aaaa,groq-key-two-bbbb',OPENROUTER_API_KEY:''});
+ const waits=[];const started=f.now;const result=await f.api.evaluate(citation,publication,new AbortController().signal,t=>waits.push(t));
+ assert.equal(result.verdict,'supported');assert.equal(f.calls,3);assert.ok(f.now>=started+30000&&f.now<started+90000,'the key that rests for 30 s is used first');
+});
+
+test('full-text scans leave out the publication abstract and its reference list', () => {
+  const Content = require('../word-content.cjs');
+  const page = ['Title of the paper', 'Abstract', 'This abstract states findings that must not be evidence.', 'Keywords: water; use', '1. Introduction', 'Water use increased in the study area.', 'References', 'Smith, J. (2020). Another paper. Journal.'].join('\n');
+  const text = Content.publicationPassages({ passages: [{ location: 'Sayfa 1', text: page }] }).map(p => p.text).join('\n');
+  assert.doesNotMatch(text, /must not be evidence/); assert.doesNotMatch(text, /Smith, J\./); assert.match(text, /Water use increased/);
+  const only = Content.publicationPassages({ abstractOnly: true, passages: [{ location: 'Yayın özeti', text: 'Abstract\nWater use increased' }] });
+  assert.match(only[0].text, /Water use increased/, 'an abstract-only record is the only evidence there is');
+});
+
+test('a cheaper model screens long publications: irrelevant sections never reach the main model, and a failed screening is treated as relevant',async()=>{
+ const seen=[];const f=fixture((calls,now,options)=>{const payload=JSON.parse(options.body);const name=payload.response_format?.json_schema?.name;const input=JSON.parse(payload.messages[1].content);seen.push({name,model:payload.model});
+   if(name==='batch_screen')return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({relevant:input.passages.some(p=>p.text.includes('routing algorithms'))})}}]}));
+   const p=input.passages.find(p=>p.text.includes('routing algorithms'));return response([{claim:'Routing',verdict:p?'supported':'not_found',passage:p?.id||'',quote:p?'We study routing algorithms for mixture of experts.':''}]);},{CONTENT_SCREENING:'true',CONTENT_QUERY_EXPANSION:'false'});
+ const text={title:'MoE survey',passages:[{location:'Page 1',text:'The model is trained on the data and evaluated in the lab. '.repeat(500)},{location:'Page 5',text:'Another unrelated discussion of datasets and metrics. '.repeat(500)},{location:'Page 9',text:'We study routing algorithms for mixture of experts.'}]};
+ const result=await f.api.evaluate({sentence:'The survey studies routing algorithms for mixture of experts.',context:[]},text,new AbortController().signal,()=>{});
+ const main=seen.filter(s=>s.name==='citation_evidence'),screens=seen.filter(s=>s.name==='batch_screen');
+ assert.equal(result.verdict,'supported');assert.ok(screens.length>=1&&main.length===1,JSON.stringify(seen));
+ assert.ok(screens.every(s=>s.model==='openai/gpt-oss-20b'),'screening uses the small model');assert.ok(main.every(s=>s.model==='openai/gpt-oss-120b'),'evidence uses the main model');
+ // every section screened out: the best-ranked one still goes to the main model
+ const none=fixture((calls,now,options)=>{const payload=JSON.parse(options.body);const name=payload.response_format?.json_schema?.name;
+   if(name==='batch_screen')return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({relevant:false})}}]}));return response([{claim:'x',verdict:'not_found',passage:'',quote:''}]);},{CONTENT_SCREENING:'true',CONTENT_QUERY_EXPANSION:'false'});
+ const empty=await none.api.evaluate({sentence:'Bu çalışma yeni bir yöntem önerdi ve doğruladı.',context:[]},{title:'T',passages:[{location:'Page 1',text:'The model is trained on the data and evaluated in the lab. '.repeat(500)}]},new AbortController().signal,()=>{});
+ assert.equal(empty.verdict,'not_found');assert.ok(empty.coverage.screenedOut>=1&&empty.coverage.scannedBatches===1);assert.match(empty.retrieval,/ön elemede/);
+ // a screening that fails (not JSON) costs nothing but tokens: the section is evaluated
+ const broken=fixture((calls,now,options)=>{const payload=JSON.parse(options.body);const name=payload.response_format?.json_schema?.name;
+   if(name==='batch_screen')return new Response(JSON.stringify({choices:[{message:{content:'not json'}}]}));return response([{claim:'x',verdict:'not_found',passage:'',quote:''}]);},{CONTENT_SCREENING:'true',CONTENT_QUERY_EXPANSION:'false'});
+ const kept=await broken.api.evaluate({sentence:'Bu çalışma yeni bir yöntem önerdi ve doğruladı.',context:[]},{title:'T',passages:[{location:'Page 1',text:'The model is trained on the data and evaluated in the lab. '.repeat(500)}]},new AbortController().signal,()=>{});
+ assert.equal(kept.coverage.screenedOut,0);assert.equal(kept.coverage.scannedBatches,kept.coverage.batches);
+});
+test('evidence found in several sections is merged locally, without another model call',async()=>{
+ const names=[];const f=fixture((calls,now,options)=>{const payload=JSON.parse(options.body);names.push(payload.response_format?.json_schema?.name);const input=JSON.parse(payload.messages[1].content);
+   const p=input.passages[0];return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({verdict:'partial',explanation:'Kısmi destek '+calls+'.',claims:[{claim:'Bulgu '+calls,verdict:'partial',passage:p.id,quote:p.text.slice(0,60)}]})}}]}));},{CONTENT_SCREENING:'false',CONTENT_QUERY_EXPANSION:'false'});
+ const filler='The model is trained on the data and evaluated in the lab. '.repeat(400);
+ const text={title:'MoE survey',passages:[{location:'Page 1',text:filler},{location:'Page 4',text:filler.replace('model','system')},{location:'Page 9',text:filler.replace('lab','field')}]};
+ const result=await f.api.evaluate({sentence:'The survey reports findings about the model and the lab.',context:[]},text,new AbortController().signal,()=>{});
+ assert.ok(result.coverage.batches>1&&names.length===result.coverage.batches,'one call per scanned section, no extra merge call: '+names.length+' vs '+result.coverage.batches);
+ assert.equal(result.verdict,'partial');assert.equal(result.claims.length,names.length);assert.match(result.explanation,/birleştirildi/);
+});
+test('search terms are stored in the shared cache: a restart does not ask the model again',async()=>{
+ const make=()=>{const kinds=[];return {kinds,f:fixture((calls,now,options)=>{const payload=JSON.parse(options.body);kinds.push(payload.response_format?.json_schema?.name);
+   if(payload.response_format?.json_schema?.name==='search_terms')return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({terms:['routing algorithms','mixture of experts']})}}]}));
+   return response([{claim:'x',verdict:'not_found',passage:'',quote:''}]);},{CONTENT_SCREENING:'false'})};};
+ const text={title:'MoE survey kalıcı',passages:[{location:'Page 1',text:'The model is trained on the data and evaluated in the lab. '.repeat(500)}]};
+ const c={sentence:'Çalışma, kalıcı önbellek denemesi için uzman karışımı yönlendirme algoritmalarını inceledi.',context:[]};
+ const one=make();await one.f.api.evaluate(c,text,new AbortController().signal,()=>{});assert.ok(one.kinds.includes('search_terms'));
+ const two=make();await two.f.api.evaluate(c,text,new AbortController().signal,()=>{});assert.ok(!two.kinds.includes('search_terms'),'a fresh process reads the terms from the cache');
 });

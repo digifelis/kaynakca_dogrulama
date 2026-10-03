@@ -15,6 +15,7 @@ const outputText = document.querySelector('#output-text');
 const copyButton = document.querySelector('#copy-button');
 const copyStatus = document.querySelector('#copy-status');
 const stopButton = document.querySelector('#stop-button');
+const retryButton = document.querySelector('#retry-button');
 let runController = null;
 // With the local server the run happens there (queue services or a worker thread); the browser only polls.
 let serverMode = false;
@@ -66,7 +67,13 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
 }
 
+const isUnresolved = result => ['error', 'pending'].includes(result?.status);
+
 function renderSummary(results) {
+  const unresolved = results.filter(isUnresolved).length;
+  retryButton.classList[unresolved ? 'remove' : 'add']('hidden');
+  retryButton.disabled = !!runController;
+  retryButton.textContent = `Hatalı ve bekleyenleri yeniden sorgula (${unresolved})`;
   summaryStats.innerHTML = Object.entries(filterLabels).map(([status, label]) => {
     const count = status === 'all' ? results.length : results.filter(result => result.status === status).length;
     return `<button type="button" class="summary-stat" data-filter="${status}" aria-pressed="${activeFilter === status}" aria-label="${count} ${label}: sonuçları göster"><strong>${count}</strong><span>${label}</span></button>`;
@@ -310,6 +317,57 @@ async function runVerification() {
   }
 }
 
+// Re-queries only the records left as service error or waiting for additional sources.
+async function retryUnresolved() {
+  if (runController) return;
+  const results = displayedResults;
+  const targets = results.map((result, index) => isUnresolved(result) ? index : -1).filter(index => index >= 0);
+  if (!targets.length) return;
+  await serverReady;
+  runController = new AbortController();
+  const controls = [verifyButton, clearButton, input, ...document.querySelectorAll('.example-button')];
+  controls.forEach(control => { control.disabled = true; });
+  stopButton.disabled = false;
+  progressSection.classList.remove('hidden');
+  progressBar.style.width = '0%';
+  copyStatus.textContent = '';
+  let current = 0, stopped = false;
+  ReferenceEngine.configure({ signal: runController.signal, onRetry: ({ provider, remainingMs, waiting }) => {
+    const seconds = Math.ceil(remainingMs / 1000);
+    const duration = seconds >= 60 ? `${Math.floor(seconds / 60)} dk ${seconds % 60} sn` : `${seconds} sn`;
+    progressLabel.textContent = waiting ? `Kayıt ${current + 1}: ${provider} kotası için ${duration} bekleniyor; otomatik devam edilecek` : `Kayıt ${current + 1}: ${provider} sorgusu yeniden deneniyor`;
+  } });
+  try {
+    for (let position = 0; position < targets.length; position += 1) {
+      current = targets[position];
+      progressLabel.textContent = `Yeniden sorgu: kayıt ${current + 1} inceleniyor`;
+      progressValue.textContent = `${position} / ${targets.length}`;
+      try {
+        const retryCount = (results[current].retryCount || 0) + 1;
+        results[current] = await verifyReference(results[current].raw);
+        results[current].retryCount = retryCount;
+      } catch (error) {
+        if (error.name === 'AbortError') { stopped = true; break; }
+        results[current] = { ...results[current], status: 'error', statusText: 'Kontrol tamamlanamadı', reason: 'Yeniden sorgu tamamlanamadı; kaynak özgün haliyle korundu.' };
+      }
+      progressBar.style.width = `${((position + 1) / targets.length) * 100}%`;
+      progressValue.textContent = `${position + 1} / ${targets.length}`;
+      renderSummary(results);
+      renderResults(results);
+      renderOutput(results);
+    }
+    progressLabel.textContent = stopped ? 'Yeniden sorgu durduruldu; tamamlanan sonuçlar korundu.' : 'Yeniden sorgu tamamlandı';
+  } finally {
+    ReferenceEngine.configure({ signal: null, onRetry: null });
+    runController = null;
+    stopButton.disabled = true;
+    controls.forEach(control => { control.disabled = false; });
+    renderSummary(results);
+    renderResults(results);
+    renderOutput(results);
+  }
+}
+
 input.addEventListener('input', updateCount);
 resultList.addEventListener('input', event => {
   const field = event.target.closest('[data-web-draft]');
@@ -342,6 +400,7 @@ clearButton.addEventListener('click', () => {
   progressSection.classList.add('hidden');
 });
 verifyButton.addEventListener('click', runVerification);
+retryButton.addEventListener('click', retryUnresolved);
 stopButton.addEventListener('click', () => runController?.abort());
 document.querySelectorAll('.example-button').forEach(button => button.addEventListener('click', () => {
   input.value = examples[button.dataset.example];

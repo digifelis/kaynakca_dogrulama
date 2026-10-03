@@ -46,8 +46,9 @@ test('store: a user can never read, change or delete another user\'s project dat
   const store = createStore(temp());
   const a = 'a'.repeat(32), b = 'b'.repeat(32);
   const pa = store.createProject(a, 'A projesi'), pb = store.createProject(b, 'B projesi');
-  const da = store.addDocument(a, pa.id, { fileName: 'a.pdf' });
-  store.insertChunks(a, pa.id, da.id, [{ page: 1, text: 'gizli a metni' }]);
+  const ca = store.createCollection(a, 'A koleksiyonu'); store.setProjectCollections(a, pa.id, [ca.id]);
+  const da = store.addDocument(a, ca.id, { fileName: 'a.pdf' });
+  store.insertChunks(a, ca.id, da.id, [{ page: 1, text: 'gizli a metni' }]);
   store.setEmbeddings(a, da.id, [{ id: store.chunksToEmbed(a, da.id, 5)[0].id, vector: [1, 0] }]);
   store.updateDocument(a, da.id, { status: 'ready' });
   store.addMessage(a, pa.id, { role: 'user', text: 'soru' });
@@ -55,7 +56,9 @@ test('store: a user can never read, change or delete another user\'s project dat
   // B asks for A's rows by id, in every table
   assert.equal(store.getProject(b, pa.id), null);
   assert.equal(store.getDocument(b, da.id), null);
-  assert.deepEqual(store.listDocuments(b, pa.id), []);
+  assert.deepEqual(store.listDocuments(b, ca.id), []); assert.equal(store.getCollection(b, ca.id), null); assert.deepEqual(store.listCollections(b), []);
+  assert.equal(store.renameCollection(b, ca.id, 'x'), false); assert.equal(store.deleteCollection(b, ca.id), false);
+  assert.deepEqual(store.setProjectCollections(b, pb.id, [ca.id]), [], 'another user\'s collection cannot be linked');
   assert.deepEqual(store.projectChunks(b, pa.id), []);
   assert.deepEqual(store.listMessages(b, pa.id), []);
   assert.equal(store.getManuscript(b, pa.id).html, '');
@@ -71,11 +74,13 @@ test('store: a user can never read, change or delete another user\'s project dat
   assert.equal(store.getManuscript(a, pa.id).html, '<p>a</p>');
   assert.deepEqual(store.listProjects(b).map(p => p.title), ['B projesi']);
   assert.equal(store.countProjects(a), 1);
-  // deleting A's project removes everything of A and nothing of B
+  // deleting A's project removes its messages and manuscript and the link, but not A's collection; deleting the collection removes its sources
   store.addMessage(b, pb.id, { role: 'user', text: 'b soru' });
   assert.equal(store.deleteProject(a, pa.id), true);
-  assert.deepEqual(store.projectChunks(a, pa.id), []); assert.equal(store.getDocument(a, da.id), null); assert.deepEqual(store.listMessages(a, pa.id), []);
+  assert.deepEqual(store.projectChunks(a, pa.id), []); assert.ok(store.getDocument(a, da.id)); assert.deepEqual(store.listMessages(a, pa.id), []);
   assert.equal(store.listMessages(b, pb.id).length, 1);
+  assert.equal(store.deleteCollection(a, ca.id), true);
+  assert.equal(store.getDocument(a, da.id), null); assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM chunks').get().n, 0);
   store.close();
 });
 
@@ -240,9 +245,12 @@ test('gemini embedding: request shape, normalization, quota and error handling (
   process.env.GEMINI_EMBEDDING_MODEL = 'gemini-embedding-001';
   const limited = await Gemini.embed({ texts: ['a'], task: 'document' }, { fetchImpl: async () => ({ ok: false, status: 429, headers: new Headers({ 'retry-after': '7' }), json: async () => ({}) }) });
   assert.ok(limited.quota.retryAt - Date.now() > 5000 && limited.quota.retryAt - Date.now() <= 7500);
+  // The key that was just refused with 429 rests in the pool; another key takes the next request.
+  process.env.GEMINI_API_KEY = 'test-key-2';
   await assert.rejects(Gemini.embed({ texts: ['a'], task: 'document' }, { fetchImpl: async () => ({ ok: false, status: 400, headers: new Headers(), json: async () => ({ error: { message: 'bad key AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456' } }) }) }), e => /HTTP 400/.test(e.message) && !/AIza/.test(e.message));
   assert.throws(() => Gemini.validate({ texts: [], task: 'document' })); assert.throws(() => Gemini.validate({ texts: ['a'], task: 'x' })); assert.throws(() => Gemini.validate({ texts: ['a'.repeat(13000)], task: 'query' }));
   delete process.env.GEMINI_API_KEY; await assert.rejects(Gemini.embed({ texts: ['a'], task: 'query' }), /GEMINI_API_KEY/);
+  assert.equal(Gemini.configured(), false);
 });
 
 test('authors are read from the line under the title only when it looks like a list of names', () => {
@@ -251,4 +259,62 @@ test('authors are read from the line under the title only when it looks like a l
   assert.deepEqual(Meta.guessAuthors(para('Eğitimde dijital dönüşüm', 'Ahmet Yılmaz ve Ayşe Kaya'), 'Eğitimde dijital dönüşüm'), ['Ahmet Yılmaz', 'Ayşe Kaya']);
   assert.deepEqual(Meta.guessAuthors(para('Eğitimde dijital dönüşüm', 'Bu çalışma eğitimde dijital dönüşümü incelemektedir ve sonuçlar açıklanmıştır.'), 'Eğitimde dijital dönüşüm'), []);
   assert.deepEqual(Meta.guessAuthors(para('Başlık burada', 'Ankara Üniversitesi Eğitim Fakültesi, 2020'), 'Başlık burada'), [], 'an affiliation line is not an author list');
+});
+
+test('chunker: the bibliography never reaches the passages (heading variants, table of contents, no heading), appendices stay', () => {
+  const Chunker = require('../lib/writer-chunker.cjs');
+  const para = (texts) => texts.map((text, i) => ({ part: 'word/document.xml', index: i, text, page: 1 + Math.floor(i / 5), style: '' }));
+  const body = ['Giriş', 'Bu çalışma öğrenci motivasyonunun akademik başarı üzerindeki etkisini uzun bir süre boyunca inceleyen bir araştırmadır ve bulgular açıktır.'];
+  const refs = ['Yılmaz, A. (2020). Motivasyon ve başarı. Eğitim Dergisi, 12(3), 45–60. https://doi.org/10.1/abc', 'Smith, J., & Brown, K. (2019). Digital learning. Journal of Tests, 4(1), 1-9.',
+    'Kaya, B. (2018). Başarı. Ankara: Nobel Yayınları.', 'Doe, J. (2017). In Proceedings of the Big Conference (pp. 10-20). Springer.', 'Lee, C. (2021). Another title here. Computers & Education, 5(2), 100-120. doi:10.2/xyz'];
+  const indexed = parts => Chunker.chunkParagraphs(para(parts)).map(c => c.text).join('\n');
+  for (const heading of ['Kaynakça', '7. KAYNAKLAR', 'Referanslar', 'Works Cited', 'References']) {
+    const text = indexed([...body, heading, ...refs]);
+    assert.match(text, /motivasyonunun/); assert.doesNotMatch(text, /Journal of Tests|Nobel/, heading);
+  }
+  assert.doesNotMatch(indexed(['İçindekiler', 'Kaynakça 45', ...body, 'Kaynakça', ...refs]), /Journal of Tests/, 'table of contents entry is not the bibliography');
+  assert.doesNotMatch(indexed([...body, ...refs]), /Journal of Tests|Nobel/, 'closing run of entries without a heading');
+  const appendix = indexed([...body, 'Kaynakça', ...refs, 'Ek 1', 'Ek anket soruları metni burada yer alan uzun bir paragraftır ve indekslenmelidir.']);
+  assert.match(appendix, /Ek anket/); assert.doesNotMatch(appendix, /Journal of Tests/);
+  assert.match(indexed([...body, 'Kaynakça', ...refs, 'Ekonomi', 'Ekonomi başlığı altında kalan ve indekslenmesi gereken yeterince uzun bir paragraf metni.']), /Ekonomi başlığı/);
+});
+
+test('künye lookup: a DOI is queried alone, so wrong guesses from the file cannot hide the record', () => {
+  const Meta = require('../lib/writer-meta.cjs');
+  const guess = { title: 'Şablon başlığı', authors: ['Yanlış, A.'], year: '2019', doi: '10.3390/en16010286' };
+  assert.equal(Meta.doiQuery(guess), 'https://doi.org/10.3390/en16010286');
+  assert.equal(Meta.doiQuery({ ...guess, doi: '' }), '');
+  assert.match(Meta.queryLine({ ...guess, doi: '' }), /Yanlış, A\. \(2019\)\. Şablon başlığı\./);
+  const record = { matched: { title: 'Gerçek başlık', author: [{ family: 'Ahluwalia', given: 'Rajesh K.' }], year: 2023, doi: '10.3390/en16010286', containerTitle: 'Energies', volume: 16, issue: 1, pages: '286' }, suggested: 'APA satırı', provider: 'Crossref' };
+  const filled = Meta.fromMatched(guess, record);
+  assert.deepEqual([filled.title, filled.authors, filled.year, filled.journal, filled.volume, filled.issue, filled.pages, filled.verified],
+    ['Gerçek başlık', ['Ahluwalia, Rajesh K.'], '2023', 'Energies', '16', '1', '286', true]);
+});
+
+test('chunker: the abstract and its keywords never reach the passages, the body does', () => {
+  const Chunker = require('../lib/writer-chunker.cjs');
+  const para = texts => texts.map((text, i) => ({ part: 'word/document.xml', index: i, text, page: 1, style: '' }));
+  const indexed = texts => Chunker.chunkParagraphs(para(texts)).map(c => c.text).join('\n');
+  const abstract = 'Bu özet metni çalışmanın genel amacını ve yöntemini kısaca anlatan ve indekslenmemesi gereken uzun bir paragraftır.';
+  const body = 'Gövde metni öğrenci motivasyonunun akademik başarı üzerindeki etkisini uzun bir süre boyunca inceleyen bir araştırmanın bulgularını anlatır.';
+  const tr = indexed(['Özet', abstract, 'Anahtar kelimeler: motivasyon; başarı', 'Abstract', 'This abstract summarises the study aims and methods in several words.', 'Keywords: motivation', '1. Giriş', body]);
+  assert.match(tr, /Gövde metni/); assert.doesNotMatch(tr, /Bu özet metni|abstract summarises|motivasyon; başarı/);
+  assert.doesNotMatch(indexed(['Abstract: ' + abstract, 'Introduction', body]), /Bu özet metni/);
+  assert.match(indexed(['Giriş', body]), /Gövde metni/);
+});
+
+test('answer requests stay small: repeated passage overlap is sent once, history and draft are cut', () => {
+  const Answer = require('../lib/writer-answer.cjs'), Skills = require('../lib/writer-skills.cjs');
+  const words = (from, n) => Array.from({ length: n }, (_, i) => 'kelime' + (from + i)).join(' ');
+  const first = { documentId: 'd1', page: 1, text: words(0, 80) }, second = { documentId: 'd1', page: 1, text: words(40, 80) }, other = { documentId: 'd2', page: 1, text: words(40, 80) };
+  const skill = Skills.load().skills.find(sk => sk.name === 'genel');
+  const sources = { d1: { fileName: 'a.pdf', meta: {} }, d2: { fileName: 'b.pdf', meta: {} } };
+  const history = Array.from({ length: 8 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: (i % 2 ? 'cevap ' : 'soru ') + 'uzun '.repeat(400) + i }));
+  const spec = Answer.request({ skill, question: 'Soru?', chunks: [first, second, other], sourcesById: sources, history, draft: 'x'.repeat(9000) });
+  const body = JSON.parse(spec.user);
+  assert.equal(body.passages[0].text, first.text, 'the first passage is complete');
+  assert.equal(body.passages[1].text, words(80, 40), 'the second one starts after the 40 repeated words');
+  assert.equal(body.passages[2].text, other.text, 'overlap is only removed between passages of the same source');
+  assert.equal(body.conversation.length, 4); assert.ok(body.conversation.every(m => m.text.length <= (m.role === 'user' ? 502 : 602)));
+  assert.equal(body.draft.length, 3500);
 });

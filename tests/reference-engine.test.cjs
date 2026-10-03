@@ -331,3 +331,111 @@ test('batch preserves completed records, shows quota countdown, then continues r
   assert.equal(document.querySelector('#output-text').textContent.split('\n\n').length, 2);
   assert.equal(document.querySelector('#stop-button').disabled, true);
 });
+
+test('lines holding only a DOI or arXiv link are separate records; a wrapped DOI line stays with its reference', () => {
+  const engine = load();
+  const ids = ['10.1007/s44443-025-00113-3', 'http://arxiv.org/abs/2603.14170', 'https://doi.org/10.1016/j.is.2021.101967', 'arXiv:2301.00001'];
+  assert.deepEqual(Array.from(engine.splitReferences(ids.join('\n'))), ids);
+  const wrapped = 'Song, Y. (2025). Legal text summarization. Journal of Law, 37(5), 1–9.\nhttps://doi.org/10.1007/s44443-025-00113-3';
+  assert.equal(engine.splitReferences(wrapped).length, 1);
+});
+
+test('identifier-only input is recognised; ordinary references are not', () => {
+  const engine = load();
+  for (const input of ['10.1145/3788646.3789533', 'doi: 10.1016/j.is.2021.101967', 'https://doi.org/10.1109/ICTBIG68706.2025.11323570', 'http://arxiv.org/abs/2603.14170', '10.48550/arXiv.1706.03762']) assert.equal(engine.parseReference(input).idOnly, true, input);
+  assert.equal(engine.parseReference('Smith, A. (2020). A title here. https://doi.org/10.1/abc').idOnly, false);
+  assert.equal(engine.parseReference('https://example.com/page').idOnly, false);
+});
+
+test('a bare DOI is resolved from its Crossref record and formatted as registered', async () => {
+  const requests = [];
+  const engine = load(async url => {
+    requests.push(String(url));
+    return json({ message: { type: 'proceedings-article', title: ['Advances in Legal Text Summarization: A Survey'], DOI: '10.1109/ICTBIG68706.2025.11323570',
+      author: [{ family: 'Potluri', given: 'Tejaswi' }, { family: 'Motupalli', given: 'Ravikanth' }, { name: 'Legal AI Group' }],
+      'container-title': ['2025 IEEE 5th International Conference on ICT in Business Industry &amp;amp; Government (ICTBIG)'], page: '1-8', issued: { 'date-parts': [[2025, 12, 12]] } } });
+  });
+  const result = await engine.verifyReference('https://doi.org/10.1109/ICTBIG68706.2025.11323570');
+  assert.equal(result.status, 'verified');
+  assert.equal(result.corrected, 'Potluri, T., Motupalli, R., & Legal AI Group (2025). Advances in Legal Text Summarization: A Survey. 2025 IEEE 5th International Conference on ICT in Business Industry & Government (ICTBIG), 1–8. https://doi.org/10.1109/ICTBIG68706.2025.11323570');
+  assert.match(result.correctedHtml, /<em>2025 IEEE 5th International Conference on ICT in Business Industry &amp; Government \(ICTBIG\)<\/em>, 1–8\./);
+  assert.equal(requests.length, 1, 'a Crossref identity hit needs no further source');
+});
+
+test('a bare journal DOI gets volume and issue; a missing record is reported as not found without title searches', async () => {
+  const seen = [];
+  const engine = load(async url => {
+    seen.push(String(url));
+    if (String(url).includes('api.crossref.org/works/10.1007')) return json({ message: { type: 'journal-article', title: ['Legal text summarization via judicial syllogism'], DOI: '10.1007/s44443-025-00113-3',
+      author: [{ family: 'Song', given: 'Yumei' }, { family: 'Lin', given: 'Chuan' }], 'container-title': ['Journal of King Saud University Computer and Information Sciences'], volume: '37', issue: '5', 'article-number': '111', issued: { 'date-parts': [[2025, 7]] } } });
+    return new Response('', { status: 404 });
+  });
+  const found = await engine.verifyReference('10.1007/s44443-025-00113-3');
+  assert.equal(found.corrected, 'Song, Y., & Lin, C. (2025). Legal text summarization via judicial syllogism. Journal of King Saud University Computer and Information Sciences, 37(5). https://doi.org/10.1007/s44443-025-00113-3');
+  seen.length = 0;
+  const missing = await engine.verifyReference('10.1234/does-not-exist');
+  assert.equal(missing.status, 'failed');
+  assert.match(missing.reason, /tanımlayıcıyla kayıt bulunamadı/);
+  assert.ok(!seen.some(url => url.includes('query.bibliographic') || url.includes('search=')), seen.join('\n'));
+});
+
+test('a bare arXiv link uses the arXiv record, never the web-page path', async () => {
+  const engine = load(async () => { throw new Error('no network'); });
+  engine.configure({ additionalProviders: {
+    route: () => ['arXiv'],
+    search: async () => [{ provider: 'arXiv', title: 'Citation-Enforced RAG for Fiscal Document Intelligence', author: [{ family: 'Shanivendra', given: 'Akhil Chandra' }],
+      year: 2026, url: 'https://arxiv.org/abs/2603.14170v1', arxiv: '2603.14170', doi: '10.48550/arxiv.2603.14170' }] } });
+  const result = await engine.verifyReference('http://arxiv.org/abs/2603.14170 ');
+  assert.equal(result.status, 'verified');
+  assert.equal(result.corrected, 'Shanivendra, A. C. (2026). Citation-Enforced RAG for Fiscal Document Intelligence. ArXiv, abs/2603.14170.');
+});
+
+test('retry button re-queries only service-error records and keeps the others', async () => {
+  const doi = '10.18653/v1/n19-1423';
+  let failing = true;
+  const urls = [];
+  const engine = load(async url => {
+    urls.push(String(url));
+    if (failing) return new Response('', { status: 503 });
+    return json({ message: record });
+  });
+  const elements = new Map();
+  const document = { querySelector(selector) {
+    if (!elements.has(selector)) elements.set(selector, { value: '', textContent: '', innerHTML: '', disabled: false, style: {}, classList: { add() {}, remove() {} }, addEventListener() {}, focus() {} });
+    return elements.get(selector);
+  }, querySelectorAll: () => [] };
+  const context = vm.createContext({ document, ReferenceEngine: engine, navigator: {}, AbortController });
+  vm.runInContext(fs.readFileSync(path.join(root, 'app.js'), 'utf8'), context);
+  document.querySelector('#reference-input').value = `Devlin, J. (2019). BERT: Pre-training of deep bidirectional transformers for language understanding. https://doi.org/${doi}`;
+  await vm.runInContext('runVerification()', context);
+  assert.match(document.querySelector('#summary-stats').innerHTML, /data-filter="error"[^>]*><strong>1</);
+  assert.match(document.querySelector('#retry-button').textContent, /\(1\)/);
+  failing = false;
+  await vm.runInContext('retryUnresolved()', context);
+  assert.match(document.querySelector('#summary-stats').innerHTML, /data-filter="verified"[^>]*><strong>1</);
+  assert.match(document.querySelector('#retry-button').textContent, /\(0\)/);
+  assert.equal(document.querySelector('#verify-button').disabled, false);
+  const before = urls.length;
+  await vm.runInContext('retryUnresolved()', context);
+  assert.equal(urls.length, before, 'nothing unresolved: no new requests');
+});
+
+test('Crossref journal articles and conference papers use container-based APA, not publisher', async () => {
+  const article = { title: ['Effective deep learning approaches for summarization of legal texts'], author: [{ family: 'Anand', given: 'Deepa' }, { family: 'Wagh', given: 'Rupali' }],
+    issued: { 'date-parts': [[2022, 5]] }, DOI: '10.1016/j.jksuci.2019.11.015', 'container-title': ['Journal of King Saud University - Computer and Information Sciences'],
+    volume: '34', issue: '5', page: '2141-2150', publisher: 'Springer Science and Business Media LLC', type: 'journal-article' };
+  const engine = load(async () => json({ message: article }));
+  const result = await engine.verifyReference('Anand, D., & Wagh, R. (2022). Effective deep learning approaches for summarization of legal texts. https://doi.org/10.1016/j.jksuci.2019.11.015');
+  assert.equal(result.suggested, 'Anand, D., & Wagh, R. (2022). Effective deep learning approaches for summarization of legal texts. Journal of King Saud University - Computer and Information Sciences, 34(5), 2141–2150. https://doi.org/10.1016/j.jksuci.2019.11.015');
+});
+
+test('Crossref year: issue date, then published-online/print, issued, created; none stays undated', async () => {
+  const year = async raw => { const engine = load(async () => json({ message: { title: ['Example title of work'], author: [{ family: 'Smith', given: 'A' }], DOI: '10.1234/x', ...raw } }));
+    return (await engine.verifyReference('Smith, A. (2000). Example title of work. https://doi.org/10.1234/x')).matched.year; };
+  assert.equal(await year({ 'journal-issue': { 'published-online': { 'date-parts': [[2023, 1]] } }, 'published-online': { 'date-parts': [[2022, 12, 27]] }, issued: { 'date-parts': [[2022, 12, 27]] } }), 2023);
+  assert.equal(await year({ 'published-print': { 'date-parts': [[2021]] }, 'published-online': { 'date-parts': [[2020]] }, issued: { 'date-parts': [[2019]] } }), 2020);
+  assert.equal(await year({ 'published-print': { 'date-parts': [[2021]] }, issued: { 'date-parts': [[2019]] } }), 2021);
+  assert.equal(await year({ issued: { 'date-parts': [[2019]] }, created: { 'date-parts': [[2018]] } }), 2019);
+  assert.equal(await year({ created: { 'date-parts': [[2018]] } }), 2018);
+  assert.equal(await year({}), null);
+});

@@ -2,6 +2,7 @@
 #   node scripts/generate-keys.cjs           # once: RS256 key pairs into ./keys
 #   docker compose up --build
 # API keys: services/verify/.env and services/llm/.env (see the .env.example files next to them).
+# Keys added in the admin panel are kept by the LLM service in the llm-data volume (run one LLM service: replicas stay 1).
 # Each container mounts only the public keys and its own private key (as a secret).
 # On another server, run any service alone and point QUEUE_URL at the queue's address.
 name: kaynakca-masasi
@@ -55,7 +56,11 @@ services:
       QUEUE_URL: http://queue:4180
       JWT_KEYS_DIR: /keys
       JWT_PRIVATE_KEY_FILE: /run/secrets/llm_key
+      LLM_DATA_DIR: /data/llm   # API keys added from the admin panel (sealed) live here
     env_file: [{ path: services/llm/.env, required: false }]
+    volumes:
+      - ./keys/public:/keys/public:ro
+      - llm-data:/data/llm
     secrets: [llm_key]
     depends_on: { queue: { condition: service_healthy } }
 
@@ -67,6 +72,10 @@ services:
       QUEUE_URL: http://queue:4180
       JWT_KEYS_DIR: /keys
       JWT_PRIVATE_KEY_FILE: /run/secrets/web_key
+      # From the .env next to this file (see KURULUM.md, section 10): public address, accepted host names, reverse proxy in front.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      TRUST_PROXY: ${TRUST_PROXY:-}
     volumes:
       - ./keys/public:/keys/public:ro
       - web-data:/data
@@ -81,4 +90,5 @@ secrets:
 
 volumes:
   queue-data:
+  llm-data:
   web-data:

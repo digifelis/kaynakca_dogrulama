@@ -17,7 +17,7 @@ function createAuthService({ auth, usage = null, trustProxy = process.env.TRUST_
     const plan = Plans.get(user.plan), next = Plans.nextPlan(user.plan);
     const summary = usage?.summary?.(user.id) || null;
     return { plan: { id: plan.id, title: plan.title, description: plan.description, limits: Plans.limitsFor(plan.id), nextPlan: next ? { id: next, title: Plans.get(next).title, limits: Plans.limitsFor(next) } : null },
-      planExpiresAt: user.planExpiresAt, usage: summary, monthTokens: summary?.month.totalTokens ?? 0 };
+      planExpiresAt: user.planExpiresAt, usage: summary, monthTokens: summary?.month.totalTokens ?? 0, monthReferences: usage?.monthReferences?.(user.id) ?? 0 };
   }
 
   async function handle(req, res, url, json) {

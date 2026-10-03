@@ -8,7 +8,7 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --chown=node:node . .
-RUN mkdir -p /data && chown node:node /data
+RUN mkdir -p /data/llm && chown -R node:node /data
 USER node
 # Each container chooses its service with its command (see docker-compose.yml).
 CMD ["node", "services/queue/server.cjs"]

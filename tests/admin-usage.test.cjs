@@ -9,7 +9,9 @@ async function until(check, ms = 8000) { const end = Date.now() + ms; for (;;) {
 // uploads the fixture PDF as a source and waits until it is searchable; returns the project id
 async function projectWithSource(api, h) {
   const { project } = await api('POST', '/api/writer/projects', { title: 'Deneme' });
-  const added = await api('POST', `/api/writer/projects/${project.id}/sources`, { name: 'makale.pdf', data: h.PDF });
+  const { collection } = await api('POST', '/api/writer/collections', { name: 'Deneme koleksiyonu' });
+  await api('PUT', `/api/writer/projects/${project.id}/collections`, { ids: [collection.id] });
+  const added = await api('POST', `/api/writer/collections/${collection.id}/sources`, { name: 'makale.pdf', data: h.PDF });
   assert.equal(added.status, 202, JSON.stringify(added));
   await until(async () => (await api('GET', `/api/writer/projects/${project.id}`)).sources[0].status === 'ready');
   return project.id;

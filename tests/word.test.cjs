@@ -120,3 +120,20 @@ test('disabled bibliography verification is respected for all LLM scopes without
  assert.equal(s.references[1].verification,previous);
  s.checks.references=true;assert.equal(Service.scopeNeedsVerification(s,{citation:'c1'}),true);
 });
+test('orphan check: "and" lists, glued initials and sentence openers do not hide citations',()=>{
+ const refs=['Madusanka, W. M. L., Rajini, P. A. D., and Konara, K. M. G. K. (2016). Decision making. Proc.','Morad, A. M., and Sattarvand, J. (2013). Tire monitoring. Archives, 58(4), 1133–1144.','Vander Veen, D. J., and Jordan, W. C. (1989). Trade-offs. Management Science, 35(10), 1215–','Zheng, SY. and Chen, S. (2018). Fleet replacement. Transportation Research D, 60, 153–173.'];
+ const body=['Similarly, Madusanka (2016) reviewed it.','Morad and Sattarvand (2013) applied it.','For instance, Vander Veen and Jordan (1989) proposed it.','Methods (Zheng and Chen, 2018).'];
+ const para=(id,index,group,text)=>({id,index,part:'word/document.xml',group,text,style:''});
+ const all=[...body.map((t,i)=>para('b'+i,i,0,t)),para('h',10,1,'References'),...refs.map((t,i)=>para('r'+i,11+i,1,t))];
+ const extracted=A.extractReferences(all);
+ assert.deepEqual(extracted.references.map(r=>r.authors.length),[3,2,2,2]);
+ const orphans=A.analyze(all,extracted.references,extracted.range).findings.filter(f=>f.type.startsWith('Taranan metinde'));
+ assert.deepEqual(orphans,[]);
+});
+test('misspelled co-authored citation is linked to its undated reference, not reported as orphan',()=>{
+ const para=(id,index,group,text)=>({id,index,part:'word/document.xml',group,text,style:''});
+ const all=[para('b0',0,0,'Varaschin and De Souza (2015) evaluated fleets.'),para('h',10,1,'References'),para('r0',11,1,'Varaschina, J. and De Souza, E. (n.d.). Economics of diesel fleet replacement. Unpublished manuscript.')];
+ const ex=A.extractReferences(all);const f=A.analyze(all,ex.references,ex.range).findings;
+ assert.ok(f.some(x=>x.type.startsWith('Olası yazar yazım')));
+ assert.ok(!f.some(x=>x.type.startsWith('Taranan metinde')));
+});

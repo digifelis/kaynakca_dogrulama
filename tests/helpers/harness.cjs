@@ -47,6 +47,8 @@ function fakeProviders({ promptTokens = 120, completionTokens = 30 } = {}) {
   const real = global.fetch, calls = { chat: 0, embed: 0 };
   global.fetch = async (url, init) => {
     const target = String(url);
+    // Key checks (GET, no body) only ask whether the provider accepts the key.
+    if (!init?.body && /api.groq.com|openrouter.ai|generativelanguage/.test(target)) return { ok: true, status: 200, headers: new Headers(), json: async () => ({}) };
     if (target.includes('api.groq.com')) {
       calls.chat++;
       const body = JSON.parse(init.body), user = JSON.parse(body.messages[1].content);
@@ -75,7 +77,8 @@ async function harness({ ldap = null, startAt = Date.UTC(2026, 9, 3, 12), provid
   await app.auth.bootstrapAdmin({ log() {} });
   if (smtp) app.auth.settings.saveSmtp({ host: 'smtp.test', port: 587, from: 'Kaynakça <no-reply@test>' });
   wordService.useUsage(app.usage);
-  wordService.useGuard(userId => { const user = app.accounts.users.byId(userId); if (user) Plans.enforce(app.auth.effectivePlan(user), 'monthlyTokens', app.usage.monthTokens(userId)); });
+  wordService.useGuard(require('../../lib/word-guard.cjs')(app));
+  require('../../lib/scholar.cjs').configure({ key: () => app.auth.settings.scholar({ secret: true }).key });
   const fakes = providers ? fakeProviders() : { calls: {}, restore() {} };
   const service = writerService.configure({ usage: app.usage, verifyMeta: async () => null });
   const writerStore = require('../../lib/writer-store.cjs').defaultStore();

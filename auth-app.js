@@ -186,7 +186,10 @@
           row('Toplam', `${fmt(usage?.total.operations)} işlem · ${fmt(usage?.total.totalTokens)} token`)),
         h('h3', {}, 'Paket sınırlarınız'),
         h('table', { class: 'acct-table' }, row('Proje', fmt(limits.projects)), row('Projedeki kaynak', fmt(limits.documentsPerProject)), row('Dosya boyutu', Math.round(limits.documentBytes / MB) + ' MB'),
-          row('Günlük soru', fmt(limits.questionsPerDay)), row('Aylık token', limits.monthlyTokens ? fmt(limits.monthlyTokens) : 'Sınırsız')),
+          row('Günlük soru', fmt(limits.questionsPerDay)), row('Aylık token', limits.monthlyTokens ? fmt(limits.monthlyTokens) : 'Sınırsız'),
+          row('Belge başına sorgulanacak kaynak', limits.referencesPerDocument ? fmt(limits.referencesPerDocument) : 'Sınırsız'),
+          row('Bu ay sorgulanan kaynak', limits.monthlyReferences ? `${fmt(data.monthReferences)} / ${fmt(limits.monthlyReferences)}` : `${fmt(data.monthReferences)} (sınırsız)`),
+          row('Kayıtlı Word/PDF belge', limits.wordDocuments ? fmt(limits.wordDocuments) : 'Sınırsız')),
         plan.nextPlan ? h('p', { class: 'acct-upgrade' }, `${plan.nextPlan.title} paketinde: ${fmt(plan.nextPlan.limits.projects)} proje, ${plan.nextPlan.limits.monthlyTokens ? fmt(plan.nextPlan.limits.monthlyTokens) + ' token' : 'sınırsız token'}. Paket değişikliği için yöneticinize başvurun.`) : null)));
   }
 
@@ -196,5 +199,25 @@
     if (event.detail.page === 'giris') mountForm(FORM_PAGES[location.hash.match(/^#\/([a-z-]+)/)?.[1]] || 'login');
     if (event.detail.page === 'profil') mountProfile();
   });
+  // Token usage follows the server without a page reload: the menu badge (and an open profile page) is refreshed every
+  // five minutes while the tab is visible, and as soon as a tab that was hidden longer than that comes back.
+  const USAGE_REFRESH_MS = 5 * 60 * 1000;
+  let lastUsageAt = Date.now(), usageTimer = null;
+  async function refreshUsage() {
+    if (!state.user || document.hidden) return;
+    try {
+      const data = await api('GET', '/api/auth/me');
+      if (!data.user) return;
+      lastUsageAt = Date.now();
+      state.user = data.user; state.usage = data; renderMenu();
+      // The profile page is rebuilt only when nothing is being typed into it.
+      const profile = document.getElementById('page-profil');
+      if (profile && !profile.hidden && !profile.contains(document.activeElement)) mountProfile();
+    } catch { /* a failed check is simply tried again at the next interval */ }
+  }
+  function scheduleUsage() { clearInterval(usageTimer); usageTimer = setInterval(refreshUsage, USAGE_REFRESH_MS); }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastUsageAt >= USAGE_REFRESH_MS) { refreshUsage(); scheduleUsage(); } });
+  scheduleUsage();
+  window.Auth.refreshUsage = refreshUsage;
   refresh();
 })();

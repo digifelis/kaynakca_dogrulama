@@ -20,8 +20,20 @@ const text = (value, name, max, { required = false } = {}) => {
   return v;
 };
 
-function createAdminService({ app, writerStore = null, wordService = null }) {
+// Management of the LLM provider keys: straight on the local pool, or through the LLM service when jobs go to a queue.
+function defaultLlmKeys() {
+  const Backend = require('./lib/backend.cjs'), LlmKeys = require('./lib/llm-keys.cjs');
+  const client = Backend.queue();
+  if (!client) return LlmKeys.createLocalKeys();
+  const publicKey = require('./lib/jwt.cjs').loadPublicKeys(process.env.JWT_KEYS_DIR || require('node:path').join(__dirname, 'keys')).llm;
+  if (!publicKey) throw httpError(500, 'LLM servisinin genel anahtarı (keys/public/llm.public.pem) bulunamadı.');
+  return LlmKeys.createQueueKeys({ client, publicKey, ready: () => Backend.workers('llm').length > 0 });
+}
+
+function createAdminService({ app, writerStore = null, wordService = null, llmKeys = null }) {
   const { accounts, auth, usage } = app;
+  let keysApi = llmKeys;
+  const keys = () => keysApi || (keysApi = defaultLlmKeys());
   const ip = req => (process.env.TRUST_PROXY === '1' ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '') || req.socket.remoteAddress || '';
   async function readBody(req, limit = 256 * 1024) {
     let size = 0; const parts = [];
@@ -34,6 +46,8 @@ function createAdminService({ app, writerStore = null, wordService = null }) {
     return { id: caller.userId, username: caller.user.username };
   }
   const record = (actor, req, action, targetType, targetId, detail) => accounts.audit.log({ actorId: actor.id, actorName: actor.username, ip: ip(req), action, targetType, targetId, detail });
+  let reportsApi = null;
+  const reports = () => reportsApi || (reportsApi = require('./lib/reports.cjs').createReports({ metrics: require('./lib/metrics.cjs').defaultMetrics(), appDb: app.appDb, names: ids => names(ids) }));
   const names = ids => Object.fromEntries([...new Set(ids.filter(Boolean))].map(id => [id, accounts.users.byId(id)?.username || null]));
 
   const userView = (user, extras = {}) => ({ ...auth.publicUser(user), ...extras });
@@ -56,7 +70,9 @@ function createAdminService({ app, writerStore = null, wordService = null }) {
       sortOrder: int(input.sortOrder ?? existing?.sortOrder ?? (Math.max(0, ...accounts.plans.list().map(p => p.sortOrder)) + 1), 'Sıra', 0, 10000),
       projects: int(input.projects ?? existing?.projects, 'Proje sayısı', 1, 100000), documentsPerProject: int(input.documentsPerProject ?? existing?.documentsPerProject, 'Projedeki belge sayısı', 1, 100000),
       documentBytes: int(input.documentBytes ?? existing?.documentBytes, 'Belge boyutu', MB, 200 * MB), questionsPerDay: int(input.questionsPerDay ?? existing?.questionsPerDay, 'Günlük soru sayısı', 1, 10000000),
-      monthlyTokens: int(input.monthlyTokens ?? existing?.monthlyTokens ?? 0, 'Aylık token kotası', 0, 100000000000), active: input.active ?? existing?.active ?? true };
+      monthlyTokens: int(input.monthlyTokens ?? existing?.monthlyTokens ?? 0, 'Aylık token kotası', 0, 100000000000),
+      referencesPerDocument: int(input.referencesPerDocument ?? existing?.referencesPerDocument ?? 0, 'Belge başına kaynak sayısı', 0, 1000000), monthlyReferences: int(input.monthlyReferences ?? existing?.monthlyReferences ?? 0, 'Aylık sorgulanan kaynak sayısı', 0, 100000000),
+      wordDocuments: int(input.wordDocuments ?? existing?.wordDocuments ?? 0, 'Kayıtlı Word/PDF belge sayısı', 0, 1000000), active: input.active ?? existing?.active ?? true };
   }
   function parseLdap(input) {
     const out = {};
@@ -215,6 +231,87 @@ function createAdminService({ app, writerStore = null, wordService = null }) {
         }
       }
 
+      // ---- Model prompts and the writing assistant's skills. Every change is audited (the text itself is not).
+      if ((m = route.match(/^\/prompts(?:\/([a-z_]{3,40}))?$/))) {
+        const Prompts = require('./lib/prompts.cjs'), id = m[1] || '';
+        if (!id && req.method === 'GET') return json(res, 200, { prompts: Prompts.list(), maxChars: Prompts.MAX_CHARS }), true;
+        if (id && req.method === 'PUT') {
+          const body = await readBody(req, 64 * 1024), prompt = Prompts.set(id, body.content, actor.username);
+          record(actor, req, 'prompt.updated', 'prompt', id, { chars: prompt.content.length });
+          return json(res, 200, { prompt }), true;
+        }
+        if (id && req.method === 'DELETE') {
+          const prompt = Prompts.reset(id);
+          record(actor, req, 'prompt.reset', 'prompt', id, {});
+          return json(res, 200, { prompt }), true;
+        }
+      }
+      if ((m = route.match(/^\/skills(?:\/([a-z0-9-]{1,40}))?(\/reset)?$/))) {
+        const Skills = require('./lib/writer-skills.cjs'), name = m[1] || '';
+        const input = () => readBody(req, 64 * 1024);
+        if (!name && req.method === 'GET') return json(res, 200, { ...Skills.adminList(), plans: Plans.all().map(p => ({ id: p.id, title: p.title })), defaultSkill: Skills.DEFAULT_SKILL }), true;
+        if (!name && req.method === 'POST') {
+          const body = await input(), skill = Skills.save(body, actor.username, { create: true });
+          record(actor, req, 'skill.created', 'skill', skill.name, { title: skill.title });
+          return json(res, 201, { skill }), true;
+        }
+        if (name && !m[2] && req.method === 'PUT') {
+          const skill = Skills.save({ ...(await input()), name }, actor.username);
+          record(actor, req, 'skill.updated', 'skill', name, { title: skill.title });
+          return json(res, 200, { skill }), true;
+        }
+        if (name && !m[2] && req.method === 'DELETE') {
+          const result = Skills.remove(name, actor.username);
+          record(actor, req, 'skill.removed', 'skill', name, { hidden: result.hidden });
+          return json(res, 200, result), true;
+        }
+        if (name && m[2] && req.method === 'POST') {
+          const skill = Skills.reset(name);
+          record(actor, req, 'skill.reset', 'skill', name, {});
+          return json(res, 200, { skill }), true;
+        }
+      }
+
+      // ---- LLM provider keys (Groq, OpenRouter, Gemini). Key values are never returned, logged or audited: only the last four characters.
+      if ((m = route.match(/^\/llm-keys(?:\/([0-9a-z-]{8,64}))?(\/test)?$/))) {
+        const id = m[1] || '', body = req.method === 'GET' || req.method === 'DELETE' ? {} : await readBody(req, 16 * 1024);
+        const label = value => text(value, 'Etiket', 60), group = value => text(value, 'Grup', 40);
+        const limit = (value, name) => value === null || value === '' || value === undefined ? null : int(value, name, 0, 10000000);
+        const mode = () => (keys().mode || 'local');
+        if (!id && req.method === 'GET') return json(res, 200, { ...(await keys().run({ action: 'list' })), mode: mode() }), true;
+        if (!id && req.method === 'POST') {
+          const provider = String(body.provider || '');
+          if (!['groq', 'openrouter', 'gemini'].includes(provider)) throw httpError(400, 'Sağlayıcı groq, openrouter veya gemini olmalıdır.', 'bad_request');
+          const result = await keys().run({ action: 'add', provider, label: label(body.label), key: String(body.key || ''), group: group(body.group), rpm: limit(body.rpm, 'Dakikalık sınır'), rpd: limit(body.rpd, 'Günlük sınır') });
+          record(actor, req, 'llm.key_added', 'llm_key', result.key.id, { provider, label: result.key.label, last4: result.key.last4, group: result.key.group || null });
+          return json(res, 201, result), true;
+        }
+        if (id && m[2] && req.method === 'POST') {
+          const result = await keys().run({ action: 'test', id });
+          record(actor, req, 'llm.key_tested', 'llm_key', id, { provider: result.key?.provider, label: result.key?.label, ok: !!result.ok });
+          return json(res, 200, result), true;
+        }
+        if (id && !m[2] && req.method === 'PATCH') {
+          const patch = { action: 'update', id };
+          if ('label' in body) patch.label = label(body.label);
+          if ('group' in body) patch.group = group(body.group);
+          if ('rpm' in body) patch.rpm = limit(body.rpm, 'Dakikalık sınır');
+          if ('rpd' in body) patch.rpd = limit(body.rpd, 'Günlük sınır');
+          if ('enabled' in body) patch.enabled = !!body.enabled;
+          if (body.key) patch.key = String(body.key);
+          const result = await keys().run(patch);
+          record(actor, req, patch.key ? 'llm.key_replaced' : 'llm.key_updated', 'llm_key', id, { provider: result.key.provider, label: result.key.label, last4: result.key.last4, changed: Object.keys(patch).filter(k => !['action', 'id', 'key'].includes(k)) });
+          return json(res, 200, result), true;
+        }
+        if (id && !m[2] && req.method === 'DELETE') {
+          const before = (await keys().run({ action: 'list' })).keys.find(k => k.id === id);
+          await keys().run({ action: 'remove', id });
+          record(actor, req, 'llm.key_removed', 'llm_key', id, { provider: before?.provider, label: before?.label, last4: before?.last4 });
+          return json(res, 200, { removed: true }), true;
+        }
+        return json(res, 405, { error: 'Desteklenmeyen yöntem' }), true;
+      }
+
       // ---- operations, tokens, audit
       if (route === '/operations' && req.method === 'GET') {
         let userId = q.get('user') || '';
@@ -231,6 +328,19 @@ function createAdminService({ app, writerStore = null, wordService = null }) {
       if (route === '/stats' && req.method === 'GET') {
         const { since, until } = range(), stats = usage.stats({ since, until }), userNames = names(stats.topUsers.map(u => u.userId));
         return json(res, 200, { ...stats, topUsers: stats.topUsers.map(u => ({ ...u, username: userNames[u.userId] })) }), true;
+      }
+      // ---- reports: performance and experience metrics (lib/reports.cjs); ?format=csv&table=<name> exports one table
+      if ((m = route.match(/^\/reports\/(summary|performance|errors|usage|experience|capacity)$/)) && req.method === 'GET') {
+        const { since, until } = range(), report = reports()[m[1]]({ since, until });
+        if (q.get('format') === 'csv') {
+          const table = report[q.get('table') || ''];
+          if (!Array.isArray(table)) throw httpError(400, 'Dışa aktarılacak tablo bulunamadı.', 'bad_request');
+          const cols = [...new Set(table.flatMap(row => Object.keys(row)))], cell = v => { const t = v == null ? '' : String(v); return /[",;\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+          const body = '﻿' + [cols.join(';'), ...table.map(row => cols.map(c => cell(row[c])).join(';'))].join('\r\n');
+          res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="rapor-${m[1]}-${q.get('table')}.csv"`, 'Cache-Control': 'no-store' }); res.end(body);
+          return true;
+        }
+        return json(res, 200, report), true;
       }
       if (route === '/audit' && req.method === 'GET') {
         const result = accounts.audit.list({ action: q.get('action') || '', actor: q.get('actor') || '', since: Number(q.get('since')) || 0, until: Number(q.get('until')) || 0, limit: Number(q.get('limit')) || 100, offset: Number(q.get('offset')) || 0 });
@@ -257,6 +367,38 @@ function createAdminService({ app, writerStore = null, wordService = null }) {
         const result = await Ldap.test(config, { username: String(body.username || ''), password: String(body.password || '') }, { clientFactory: auth.ldapClientFactory });
         record(actor, req, 'admin.ldap_test', 'settings', 'ldap', { ok: result.ok });
         return json(res, 200, result), true;
+      }
+      // ---- shared cache of public lookups (verified references, full texts, PDF extractions, embeddings)
+      if ((m = route.match(/^\/cache(?:\/(verification|fulltext|extraction|embedding|all))?$/))) {
+        const Cache = require('./lib/cache-store.cjs').defaultCache();
+        if (!m[1] && req.method === 'GET') return json(res, 200, Cache.stats()), true;
+        if (m[1] && req.method === 'DELETE') {
+          const removed = Cache.clear(m[1] === 'all' ? '' : m[1]);
+          record(actor, req, 'cache.cleared', 'cache', m[1], { removed });
+          return json(res, 200, { removed, ...Cache.stats() }), true;
+        }
+      }
+      // ---- Semantic Scholar API key (paper search of the writing assistant). The value is sealed and never returned, logged or audited.
+      if (route === '/settings/scholar' || route === '/settings/scholar/test') {
+        const Scholar = require('./lib/scholar.cjs');
+        const view = () => { const s = auth.settings.scholar(); return { keySet: s.keySet, last4: s.last4 || '', envKey: !!process.env.SEMANTIC_SCHOLAR_API_KEY && !s.keySet, active: Scholar.configured() }; };
+        if (route === '/settings/scholar' && req.method === 'GET') return json(res, 200, { scholar: view() }), true;
+        if (route === '/settings/scholar' && req.method === 'PUT') {
+          const body = await readBody(req, 8 * 1024);
+          if (body.clear) { auth.settings.saveScholar({ clear: true }); record(actor, req, 'scholar.key_removed', 'settings', 'scholar', {}); return json(res, 200, { scholar: view() }), true; }
+          const key = String(body.key || '').trim();
+          if (key.length < 8 || key.length > 200 || /\s/.test(key)) throw httpError(400, 'API anahtarı 8-200 karakter olmalı ve boşluk içermemelidir.', 'bad_request');
+          const test = await Scholar.check(key);
+          if (test.rejected) throw httpError(400, test.message, 'bad_key');
+          auth.settings.saveScholar({ key });
+          record(actor, req, 'scholar.key_set', 'settings', 'scholar', { last4: key.slice(-4), tested: test.ok });
+          return json(res, 200, { scholar: view(), test }), true;
+        }
+        if (route === '/settings/scholar/test' && req.method === 'POST') {
+          const test = await Scholar.check(Scholar.apiKey());
+          record(actor, req, 'scholar.key_tested', 'settings', 'scholar', { ok: test.ok });
+          return json(res, 200, { ...test, scholar: view() }), true;
+        }
       }
       if (route === '/settings/smtp' && req.method === 'PUT') {
         const input = parseSmtp(await readBody(req)); auth.settings.saveSmtp(input);

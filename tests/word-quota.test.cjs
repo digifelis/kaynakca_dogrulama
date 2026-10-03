@@ -4,7 +4,7 @@ const root=path.join(__dirname,'..');
 test('Word worker releases ready results before the quota delay and retries the same remaining record',async()=>{
  const messages=[],calls=[];let resume;
  const engine={configure(){},getPendingRetryAt:r=>r.pendingRetryAt,waitForRetry:()=>new Promise(r=>resume=r),verifyReference:async(raw,opts)=>{calls.push(raw);if(raw==='good')return {status:'verified'};if(opts?.primaryOnly)return {fallbackNeeded:true};return calls.filter(c=>c==='pending').length<3?{status:'error',pendingRetryAt:1,fallbackNeeded:true}:{status:'verified'};}};
- vm.runInNewContext(fs.readFileSync(path.join(root,'scripts/word-verify-worker.cjs'),'utf8'),{require:id=>id==='node:worker_threads'?{parentPort:{postMessage:m=>messages.push(m)},workerData:{references:['good','pending']}}:id.includes('reference-engine')?engine:id.includes('lib/verification')?require(path.join(root,'lib/verification.cjs')):{}});
+ vm.runInNewContext(fs.readFileSync(path.join(root,'scripts/word-verify-worker.cjs'),'utf8'),{process:{env:{}},require:id=>id==='node:async_hooks'?require('node:async_hooks'):id==='node:worker_threads'?{parentPort:{postMessage:m=>messages.push(m)},workerData:{references:['good','pending']}}:id.includes('reference-engine')?engine:id.includes('lib/verification')?require(path.join(root,'lib/verification.cjs')):{}});
  for(let i=0;i<20&&!resume;i++)await new Promise(r=>setImmediate(r));
  assert.equal(messages.find(m=>m.type==='ready').pending,1);
  assert.equal(messages.find(m=>m.type==='ready').completed,1);
@@ -30,4 +30,16 @@ test('deferred Word quota unlocks content controls without losing successful res
  assert.equal(s.job.kind,'content');assert.equal(s.job.completed,2);assert.equal(s.job.message,'Groq ile karşılaştırılıyor');
  assert.equal(s.referenceJob.lastWait.provider,'CORE');
  worker.emit('message',{type:'done'});assert.equal(s.referenceJob.running,false);assert.equal(s.job.kind,'content');assert.equal(s.job.running,true);
+});
+
+test('the local worker verifies several records at once and still attributes each request to its own record', async () => {
+  const messages = [], state = { active: 0, peak: 0 }; let options = null;
+  const engine = { configure(o) { options = o; }, getPendingRetryAt: () => 0, waitForRetry: async () => {},
+    verifyReference: async raw => { state.active++; state.peak = Math.max(state.peak, state.active); await new Promise(r => setTimeout(r, 15)); options.onRequest({ provider: 'Crossref', url: 'u:' + raw, at: 1 }); await new Promise(r => setTimeout(r, 5)); options.onResponse({ provider: 'Crossref', url: 'u:' + raw, status: 200, at: 2 }); state.active--; return { status: 'verified', raw }; } };
+  const refs = ['a', 'b', 'c', 'd', 'e', 'f'];
+  vm.runInNewContext(fs.readFileSync(path.join(root, 'scripts/word-verify-worker.cjs'), 'utf8'), { process: { env: { VERIFY_LOCAL_PARALLEL: '3' } }, setTimeout, setImmediate, require: id => id === 'node:async_hooks' ? require('node:async_hooks') : id === 'node:worker_threads' ? { parentPort: { postMessage: m => messages.push(m) }, workerData: { references: refs, initialResults: [] } } : id.includes('reference-engine') ? engine : id.includes('lib/verification') ? require(path.join(root, 'lib/verification.cjs')) : {} });
+  for (let i = 0; i < 100 && !messages.some(m => m.type === 'done'); i++) await new Promise(r => setTimeout(r, 10));
+  assert.equal(messages.at(-1).type, 'done'); assert.equal(state.peak, 3, 'three records were in flight together');
+  for (const m of messages.filter(m => m.type === 'debug')) assert.equal(m.event.url.slice(2), refs[m.event.index], 'request ' + m.event.url + ' is attributed to record ' + m.event.index);
+  assert.equal(messages.filter(m => m.type === 'debug').length, 12); assert.equal(messages.filter(m => m.type === 'result').length, 6);
 });

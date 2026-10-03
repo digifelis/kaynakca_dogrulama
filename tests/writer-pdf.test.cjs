@@ -34,7 +34,9 @@ async function run(t, buffer, name) {
     return { status: response.status, ...(await response.json()) };
   };
   const { project } = await api('POST', '/projects', { title: 'Gerçek dosya' });
-  const uploaded = await api('POST', `/projects/${project.id}/sources`, { name, data: buffer.toString('base64') });
+  const { collection } = await api('POST', '/collections', { name: 'Deneme koleksiyonu' });
+  await api('PUT', `/projects/${project.id}/collections`, { ids: [collection.id] });
+  const uploaded = await api('POST', `/collections/${collection.id}/sources`, { name, data: buffer.toString('base64') });
   assert.equal(uploaded.status, 202, JSON.stringify(uploaded));
   await service.idle();
   const data = await api('GET', `/projects/${project.id}`);

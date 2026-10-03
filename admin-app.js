@@ -2,13 +2,14 @@
 // The server only ever sends metadata here: counts, kinds, timings, tokens and audit entries, never a user's documents or answers.
 (() => {
   const { h, fmt, api } = window.Auth;
-  const TABS = [['overview', 'Genel bakış'], ['users', 'Kullanıcılar'], ['plans', 'Paketler'], ['operations', 'İşlemler'], ['audit', 'Denetim kaydı'], ['settings', 'Ayarlar']];
-  const KINDS = { ask: 'Soru-cevap', 'source-process': 'Kaynak işleme', 'source-embed': 'Kaynak vektörleme', 'content-check': 'İçerik kontrolü', 'word-verify': 'Kaynakça doğrulama', 'word-upload': 'Word yükleme' };
+  const TABS = [['overview', 'Genel bakış'], ['users', 'Kullanıcılar'], ['plans', 'Paketler'], ['operations', 'İşlemler'], ['reports', 'Raporlar'], ['llm-keys', 'API anahtarları'], ['prompts', 'Model istemleri'], ['skills', "Yazım skill'leri"], ['audit', 'Denetim kaydı'], ['settings', 'Ayarlar']];
+  const KINDS = { ask: 'Soru-cevap', 'source-process': 'Kaynak işleme', 'source-embed': 'Kaynak vektörleme', 'content-check': 'İçerik kontrolü', 'word-verify': 'Kaynakça doğrulama', 'word-upload': 'Word yükleme', 'scholar-import': 'Makale içe aktarma' };
   const STATUS = { ok: 'Tamam', error: 'Hata', running: 'Sürüyor', interrupted: 'Yarım kaldı' };
   const kind = value => KINDS[value] || value;
   const when = ms => ms ? new Date(ms).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
   const dur = ms => ms == null ? '—' : ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' sn';
   const MB = 1024 * 1024;
+  let scholarNote = null;   // result of the last Semantic Scholar save/test, shown beside its buttons (survives the re-render)
   let tab = 'overview', box = null, filters = { users: { search: '', plan: '', status: '', source: '' }, operations: { user: '', kind: '', status: '' }, audit: { action: '' } };
 
   const table = (head, rows, empty = 'Kayıt yok.') => rows.length
@@ -105,16 +106,17 @@
   async function plans(panel) {
     const data = (await api('GET', '/api/admin/plans')).plans;
     panel.append(h('div', { class: 'adm-toolbar' }, h('button', { type: 'button', class: 'copy-button', onclick: () => editPlan(null, data) }, 'Yeni paket')),
-      table(['Sıra', 'Kod', 'Ad', 'Proje', 'Kaynak/proje', 'Dosya', 'Günlük soru', 'Aylık token', 'Kullanıcı', 'Durum', ''], data.map(p => h('tr', {}, h('td', {}, p.sortOrder), h('td', {}, h('code', {}, p.id)), h('td', {}, h('strong', {}, p.title), p.description ? h('small', { class: 'adm-sub' }, p.description) : null),
+      table(['Sıra', 'Kod', 'Ad', 'Proje', 'Kaynak/proje', 'Dosya', 'Günlük soru', 'Aylık token', 'Kaynak/belge sorgu', 'Aylık sorgu', 'Word/PDF belge', 'Kullanıcı', 'Durum', ''], data.map(p => h('tr', {}, h('td', {}, p.sortOrder), h('td', {}, h('code', {}, p.id)), h('td', {}, h('strong', {}, p.title), p.description ? h('small', { class: 'adm-sub' }, p.description) : null),
         h('td', {}, fmt(p.projects)), h('td', {}, fmt(p.documentsPerProject)), h('td', {}, Math.round(p.documentBytes / MB) + ' MB'), h('td', {}, fmt(p.questionsPerDay)), h('td', {}, p.monthlyTokens ? fmt(p.monthlyTokens) : 'Sınırsız'),
+        h('td', {}, p.referencesPerDocument ? fmt(p.referencesPerDocument) : 'Sınırsız'), h('td', {}, p.monthlyReferences ? fmt(p.monthlyReferences) : 'Sınırsız'), h('td', {}, p.wordDocuments ? fmt(p.wordDocuments) : 'Sınırsız'),
         h('td', {}, fmt(p.users)), h('td', {}, p.active ? 'Etkin' : 'Pasif'), h('td', {}, h('button', { type: 'button', class: 'text-button', onclick: () => editPlan(p, data) }, 'Düzenle'))))),
-      h('p', { class: 'acct-muted' }, 'Paketlerin sırası yükseltme önerisini ve skill erişimini belirler (sıra ne kadar büyükse paket o kadar üsttedir). Aylık token 0 ise sınırsızdır.'));
+      h('p', { class: 'acct-muted' }, 'Paketlerin sırası yükseltme önerisini ve skill erişimini belirler (sıra ne kadar büyükse paket o kadar üsttedir). Aylık token, belge başına sorgulanacak kaynak, aylık sorgulanan kaynak ve kayıtlı Word/PDF belge sayısı 0 ise sınırsızdır.'));
   }
   function editPlan(plan, all) {
     const status = h('div', {}), mk = (label, name, value, type = 'text', extra = {}) => h('label', { class: 'acct-field' }, h('span', {}, label), h('input', { name, type, value: value ?? '', required: name !== 'description', ...extra }));
     const f = h('form', { class: 'acct-form', onsubmit: guard(status, async event => {
       event.preventDefault(); const v = Object.fromEntries(new FormData(f));
-      const body = { title: v.title, description: v.description, sortOrder: Number(v.sortOrder), projects: Number(v.projects), documentsPerProject: Number(v.documentsPerProject), documentBytes: Math.round(Number(v.documentMb) * MB), questionsPerDay: Number(v.questionsPerDay), monthlyTokens: Number(v.monthlyTokens), active: v.active === 'on' };
+      const body = { title: v.title, description: v.description, sortOrder: Number(v.sortOrder), projects: Number(v.projects), documentsPerProject: Number(v.documentsPerProject), documentBytes: Math.round(Number(v.documentMb) * MB), questionsPerDay: Number(v.questionsPerDay), monthlyTokens: Number(v.monthlyTokens), referencesPerDocument: Number(v.referencesPerDocument), monthlyReferences: Number(v.monthlyReferences), wordDocuments: Number(v.wordDocuments), active: v.active === 'on' };
       if (plan) await api('PUT', '/api/admin/plans/' + plan.id, body); else await api('POST', '/api/admin/plans', { ...body, id: v.id });
       d.close(); render();
     }) },
@@ -122,6 +124,8 @@
       mk('Sıra', 'sortOrder', plan?.sortOrder ?? (Math.max(0, ...all.map(p => p.sortOrder)) + 1), 'number'), mk('Proje sayısı', 'projects', plan?.projects ?? 10, 'number', { min: 1 }), mk('Projedeki kaynak sayısı', 'documentsPerProject', plan?.documentsPerProject ?? 20, 'number', { min: 1 }),
       mk('En büyük dosya (MB)', 'documentMb', plan ? Math.round(plan.documentBytes / MB) : 50, 'number', { min: 1, max: 200 }), mk('Günlük soru', 'questionsPerDay', plan?.questionsPerDay ?? 200, 'number', { min: 1 }),
       mk('Aylık token (0 = sınırsız)', 'monthlyTokens', plan?.monthlyTokens ?? 0, 'number', { min: 0 }),
+      mk('Belge başına sorgulanacak kaynak (0 = sınırsız)', 'referencesPerDocument', plan?.referencesPerDocument ?? 150, 'number', { min: 0 }), mk('Aylık sorgulanan kaynak (0 = sınırsız)', 'monthlyReferences', plan?.monthlyReferences ?? 1000, 'number', { min: 0 }),
+      mk('Kayıtlı Word/PDF belge sayısı (0 = sınırsız)', 'wordDocuments', plan?.wordDocuments ?? 20, 'number', { min: 0 }),
       h('label', { class: 'acct-check' }, h('input', { type: 'checkbox', name: 'active', checked: plan ? plan.active : true }), ' Yeni atamalar için etkin'),
       h('button', { type: 'submit', class: 'copy-button' }, 'Kaydet'),
       plan ? h('button', { type: 'button', class: 'copy-button btn-danger', onclick: guard(status, async () => {
@@ -159,9 +163,157 @@
         h('td', {}, e.detail ? h('small', {}, JSON.stringify(e.detail).slice(0, 200)) : ''), h('td', {}, e.ip || ''))), 'Denetim kaydı boş.'), pager(data.total, offset, next => { panel.replaceChildren(); audit(panel, next); }));
   }
 
+  // ---- LLM provider keys (Groq, OpenRouter, Gemini). The server never sends a key value, only its last four characters.
+  const PROVIDER_NOTES = { groq: 'Sohbet (kaynakça ve içerik denetimi, yazım yardımcısı yanıtları, web künyesi).', openrouter: 'Groq dolduğunda ücretsiz modellerle yedek sohbet sağlayıcısı.', gemini: 'Yazım yardımcısının embedding (vektörleme) isteklerinde kullanılır.' };
+  const KEY_STATUS = { active: ['Etkin', 'is-ok'], cooling: ['Dinleniyor', 'is-warn'], limited: ['Sınıra ulaştı', 'is-warn'], disabled: ['Pasif', 'is-off'], invalid: ['Geçersiz', 'is-error'] };
+  let keyTimer = null;
+  const left = ms => { const s = Math.max(0, Math.ceil((ms - Date.now()) / 1000)); return s >= 3600 ? Math.floor(s / 3600) + ' sa ' + Math.floor(s % 3600 / 60) + ' dk' : s >= 60 ? Math.floor(s / 60) + ' dk ' + (s % 60) + ' sn' : s + ' sn'; };
+  async function llmKeys(panel) {
+    const status = h('div', {}), list = h('div', { class: 'adm-keys' });
+    let data = null;
+    const reload = async () => { data = await api('GET', '/api/admin/llm-keys'); draw(); };
+    const act = fn => guard(status, async (...args) => { await fn(...args); await reload(); });
+    const limitText = key => [key.rpm ? key.rpm + '/dk' : null, key.rpd ? key.rpd + '/gün' : null].filter(Boolean).join(' · ') || 'Kendi sınırı yok';
+    function edit(key) {
+      const form = h('form', { class: 'acct-form', onsubmit: act(async event => {
+        event.preventDefault(); const v = Object.fromEntries(new FormData(form));
+        const body = { label: v.label, group: v.group, rpm: v.rpm === '' ? null : Number(v.rpm), rpd: v.rpd === '' ? null : Number(v.rpd) }; if (v.key) body.key = v.key;
+        await api('PATCH', '/api/admin/llm-keys/' + key.id, body); dialogNode.close(); notice(status, 'Kaydedildi.');
+      }) },
+      h('label', { class: 'acct-field' }, h('span', {}, 'Etiket'), h('input', { name: 'label', value: key.label, maxlength: 60 })),
+      h('label', { class: 'acct-field' }, h('span', {}, 'Grup (aynı sağlayıcı hesabındaki anahtarlar)'), h('input', { name: 'group', value: key.group || '', maxlength: 40 })),
+      h('label', { class: 'acct-field' }, h('span', {}, 'Dakikalık istek sınırı'), h('input', { name: 'rpm', type: 'number', min: 0, value: key.rpm ?? '' })),
+      h('label', { class: 'acct-field' }, h('span', {}, 'Günlük istek sınırı'), h('input', { name: 'rpd', type: 'number', min: 0, value: key.rpd ?? '' })),
+      h('label', { class: 'acct-field' }, h('span', {}, 'Yeni anahtar (değiştirmek için)'), h('input', { name: 'key', type: 'password', autocomplete: 'new-password', placeholder: '…' + key.last4 + ' (değiştirmek için yazın)' })),
+      h('button', { type: 'submit', class: 'copy-button' }, 'Kaydet (yeni anahtar önce sınanır)'));
+      const dialogNode = dialog(key.providerName + ' anahtarını düzenle', form);
+    }
+    function row(key) {
+      const [statusLabel, statusClass] = KEY_STATUS[key.status] || [key.status, ''];
+      const detail = key.status === 'invalid' ? key.invalidReason : key.restUntil ? 'Yaklaşık ' + left(key.restUntil) + ' sonra yeniden denenecek.' : '';
+      const readOnly = key.source === 'env';
+      return h('tr', {},
+        h('td', {}, h('strong', {}, key.label), key.group ? h('small', { class: 'acct-muted' }, ' · grup ' + key.group) : null, h('br'), h('small', { class: 'acct-muted' }, readOnly ? '.env dosyasından' : '…' + key.last4)),
+        h('td', {}, h('span', { class: 'adm-badge ' + statusClass }, statusLabel), detail ? h('br') : null, detail ? h('small', { class: 'acct-muted' }, detail) : null),
+        h('td', {}, limitText(key)),
+        h('td', {}, `${fmt(key.today.requests)} istek`, h('br'), h('small', { class: 'acct-muted' }, `${fmt(key.today.tokens)} token · ${fmt(key.today.fail)} hata`)),
+        h('td', {}, `${fmt(key.total.ok)} başarılı · ${fmt(key.total.fail)} hata`, h('br'), h('small', { class: 'acct-muted' }, `${fmt(key.total.promptTokens + key.total.completionTokens)} token`)),
+        h('td', {}, key.lastError ? h('small', { title: key.lastError }, when(key.lastErrorAt) + ' · ' + key.lastError.slice(0, 60)) : '—', key.lastTest ? h('br') : null,
+          key.lastTest ? h('small', { class: 'acct-muted' }, 'Son test: ' + (key.lastTest.ok ? 'başarılı' : 'başarısız') + ' · ' + when(key.lastTest.at)) : null),
+        h('td', { class: 'adm-actions' },
+          h('button', { type: 'button', class: 'text-button', onclick: act(async () => { const r = await api('POST', `/api/admin/llm-keys/${key.id}/test`); notice(status, (key.label + ': ') + r.message, !r.ok); }) }, 'Test et'),
+          readOnly ? null : h('button', { type: 'button', class: 'text-button', onclick: act(async () => { await api('PATCH', '/api/admin/llm-keys/' + key.id, { enabled: !key.enabled }); }) }, key.enabled ? 'Pasifleştir' : 'Etkinleştir'),
+          readOnly ? null : h('button', { type: 'button', class: 'text-button', onclick: () => edit(key) }, 'Düzenle'),
+          h('button', { type: 'button', class: 'text-button', onclick: act(async () => { if (!confirm(readOnly ? `${key.label} (…${key.last4}) havuzdan kaldırılsın mı? .env dosyası değişmez; anahtar yalnızca kullanılmaz.` : `${key.label} (…${key.last4}) kalıcı olarak silinsin mi?`)) return; await api('DELETE', '/api/admin/llm-keys/' + key.id); notice(status, 'Silindi.'); }) }, 'Sil')));
+    }
+    function draw() {
+      list.replaceChildren(...Object.entries(data.summary).map(([provider, sum]) => {
+        const keys = data.keys.filter(k => k.provider === provider);
+        return h('section', {}, h('h3', {}, ({ groq: 'Groq', openrouter: 'OpenRouter', gemini: 'Gemini' }[provider] || provider) + ` — ${sum.available}/${sum.total} anahtar kullanılabilir`), h('p', { class: 'acct-muted' }, PROVIDER_NOTES[provider] || ''),
+          table(['Anahtar', 'Durum', 'Sınırlar', 'Bugün', 'Toplam', 'Son durum', ''], keys.map(row), 'Bu sağlayıcı için anahtar yok. Aşağıdan ekleyin.'));
+      }));
+    }
+    const form = h('form', { class: 'acct-form', onsubmit: guard(status, async event => {
+      event.preventDefault(); const v = Object.fromEntries(new FormData(form));
+      const body = { provider: v.provider, label: v.label, key: v.key, group: v.group, rpm: v.rpm === '' ? null : Number(v.rpm), rpd: v.rpd === '' ? null : Number(v.rpd) };
+      const button = form.querySelector('button[type=submit]'); button.disabled = true;
+      try { const r = await api('POST', '/api/admin/llm-keys', body); form.reset(); notice(status, r.test.quota ? 'Anahtar eklendi (şu an kotası dolu görünüyor).' : 'Anahtar sınandı ve eklendi.'); await reload(); } finally { button.disabled = false; }
+    }) },
+    h('label', { class: 'acct-field' }, h('span', {}, 'Sağlayıcı'), select('provider', [['groq', 'Groq'], ['openrouter', 'OpenRouter'], ['gemini', 'Gemini (embedding)']], 'groq', () => {})),
+    h('label', { class: 'acct-field' }, h('span', {}, 'Etiket'), h('input', { name: 'label', maxlength: 60, placeholder: 'ör. Ayşe hesabı' })),
+    h('label', { class: 'acct-field' }, h('span', {}, 'API anahtarı'), h('input', { name: 'key', type: 'password', required: true, autocomplete: 'new-password', spellcheck: 'false' })),
+    h('label', { class: 'acct-field' }, h('span', {}, 'Grup (isteğe bağlı)'), h('input', { name: 'group', maxlength: 40, placeholder: 'Aynı sağlayıcı hesabına ait anahtarlar için ortak ad' })),
+    h('label', { class: 'acct-field' }, h('span', {}, 'Dakikalık istek sınırı (isteğe bağlı)'), h('input', { name: 'rpm', type: 'number', min: 0 })),
+    h('label', { class: 'acct-field' }, h('span', {}, 'Günlük istek sınırı (isteğe bağlı)'), h('input', { name: 'rpd', type: 'number', min: 0 })),
+    h('button', { type: 'submit', class: 'copy-button' }, 'Anahtarı sına ve ekle'));
+    await reload();
+    panel.append(status,
+      h('p', { class: 'acct-muted' }, `Anahtarlar sırayla kullanılır; bir anahtarın kotası dolunca beklemeden sıradaki anahtara geçilir. Panelden eklenenler önce, .env dosyasındakiler sonra denenir. Değerler şifreli saklanır ve bir daha gösterilmez. ${data.mode === 'queue' ? 'Anahtarlar LLM servisinde tutulur ve şifreli olarak ona iletilir.' : ''} Ücretsiz katman sınırları çoğu sağlayıcıda hesap başınadır: aynı hesaptan alınan anahtarlar kotayı artırmaz, bu yüzden gerçekten ayrı hesapların anahtarlarını ekleyin veya aynı hesabınkileri aynı gruba koyun.`),
+      list, h('h3', {}, 'Anahtar ekle'), form);
+    // The status and rest times change on their own; refresh while this tab stays on screen.
+    clearInterval(keyTimer);
+    keyTimer = setInterval(() => { if (!list.isConnected) return clearInterval(keyTimer); if (!document.querySelector('dialog.adm-dialog')) api('GET', '/api/admin/llm-keys').then(next => { data = next; draw(); }, () => {}); }, 10000);
+  }
+
+  // ---- model prompts. Each one has a built-in default; saving overrides it, "Varsayılana dön" removes the override.
+  async function prompts(panel) {
+    const status = h('div', {});
+    const data = await api('GET', '/api/admin/prompts');
+    const card = prompt => {
+      const area = h('textarea', { rows: 12, maxlength: data.maxChars, spellcheck: 'false', class: 'adm-prompt' }, prompt.content);
+      const badge = h('span', { class: 'adm-badge ' + (prompt.customized ? 'is-warn' : 'is-off') }, prompt.customized ? 'Özelleştirilmiş' : 'Varsayılan');
+      const count = h('small', { class: 'acct-muted' });
+      const sync = () => { count.textContent = `${fmt(area.value.length)} / ${fmt(data.maxChars)} karakter` + (prompt.placeholders.length ? ' · zorunlu: ' + prompt.placeholders.join(' ') : ''); };
+      area.addEventListener('input', sync); sync();
+      const apply = next => { prompt = next; area.value = next.content; badge.className = 'adm-badge ' + (next.customized ? 'is-warn' : 'is-off'); badge.textContent = next.customized ? 'Özelleştirilmiş' : 'Varsayılan'; sync(); };
+      return h('details', { class: 'acct-card adm-section' }, h('summary', {}, h('h3', {}, prompt.title + ' '), badge),
+        h('p', { class: 'acct-muted' }, prompt.description, ' ', h('code', {}, prompt.id)), area, count,
+        h('div', { class: 'adm-toolbar' },
+          h('button', { type: 'button', class: 'copy-button', onclick: guard(status, async () => { const r = await api('PUT', '/api/admin/prompts/' + prompt.id, { content: area.value }); apply(r.prompt); notice(status, 'Kaydedildi. Yeni istek hemen bu metni kullanır.'); }) }, 'Kaydet'),
+          h('button', { type: 'button', class: 'copy-button btn-secondary', onclick: () => { area.value = prompt.defaultContent; sync(); } }, 'Varsayılanı yükle (kaydetmeden)'),
+          h('button', { type: 'button', class: 'copy-button btn-secondary', onclick: guard(status, async () => { if (!confirm('Özelleştirme kaldırılsın ve yerleşik metin kullanılsın mı?')) return; const r = await api('DELETE', '/api/admin/prompts/' + prompt.id); apply(r.prompt); notice(status, 'Varsayılana dönüldü.'); }) }, 'Varsayılana dön')));
+    };
+    const areas = [...new Set(data.prompts.map(p => p.area))];
+    panel.append(status, h('p', { class: 'acct-muted' }, 'Bunlar modele gönderilen sistem iletileridir (istemler). Değişiklik sunucuyu yeniden başlatmadan, sonraki isteklerden itibaren geçerlidir. Kullanıcıların sorusu ve kaynak metinleri istemlere sistem tarafından eklenir; burada yalnız talimat metni düzenlenir. Yanlış bir istem doğrulama sonuçlarını bozabilir; emin değilseniz "Varsayılana dön" ile geri alın.'),
+      ...areas.flatMap(name => [h('h3', {}, name), ...data.prompts.filter(p => p.area === name).map(card)]));
+  }
+
+  // ---- writing assistant skills (skills/*.md files, with the edits made here laid over them)
+  const ORIGIN = { file: ['Dosya', 'is-off'], edited: ['Düzenlendi', 'is-warn'], custom: ['Panelden eklendi', 'is-ok'], hidden: ['Gizli', 'is-error'] };
+  async function skills(panel) {
+    const status = h('div', {});
+    let data = null;
+    const reload = async () => { data = await api('GET', '/api/admin/skills'); draw(); };
+    const act = fn => guard(status, async (...args) => { await fn(...args); await reload(); });
+    const planName = id => data.plans.find(p => p.id === id)?.title || id || data.plans[0]?.title || '—';
+    function edit(skill) {
+      const creating = !skill;
+      skill = skill || { name: '', title: '', description: '', minPlan: '', keywords: [], needsSources: true, instruction: '' };
+      const form = h('form', { class: 'acct-form', onsubmit: act(async event => {
+        event.preventDefault(); const v = Object.fromEntries(new FormData(form));
+        const body = { title: v.title, description: v.description, minPlan: v.minPlan, keywords: v.keywords, needsSources: !!v.needsSources, instruction: v.instruction };
+        if (creating) await api('POST', '/api/admin/skills', { ...body, name: v.name }); else await api('PUT', '/api/admin/skills/' + skill.name, body);
+        node.close(); notice(status, 'Kaydedildi.');
+      }) },
+      h('label', { class: 'acct-field' }, h('span', {}, 'Ad (dosya adı; küçük harf, rakam, "-")'), h('input', { name: 'name', value: skill.name, required: true, maxlength: 40, pattern: '[a-z0-9-]{1,40}', readonly: !creating })),
+      h('label', { class: 'acct-field' }, h('span', {}, 'Başlık (kullanıcıya görünür)'), h('input', { name: 'title', value: skill.title, required: true, maxlength: 120 })),
+      h('label', { class: 'acct-field' }, h('span', {}, 'Açıklama'), h('input', { name: 'description', value: skill.description, maxlength: 300 })),
+      h('label', { class: 'acct-field' }, h('span', {}, 'En düşük paket'), select('minPlan', [['', 'İlk paket'], ...data.plans.map(p => [p.id, p.title])], skill.minPlan || '', () => {})),
+      h('label', { class: 'acct-field' }, h('span', {}, 'Anahtar sözcükler (virgülle; skill önerisi için)'), h('input', { name: 'keywords', value: (skill.keywords || []).join(', ') })),
+      h('label', { class: 'acct-check' }, h('input', { type: 'checkbox', name: 'needsSources', checked: skill.needsSources }), ' Kaynak pasajı gerektirir (kapalıysa yalnız kullanıcının kendi metnini yeniden yazar)'),
+      h('label', { class: 'acct-field' }, h('span', {}, 'Talimat metni'), h('textarea', { name: 'instruction', rows: 14, required: true, maxlength: 8000, class: 'adm-prompt' }, skill.instruction)),
+      h('small', { class: 'acct-muted' }, 'Atıflar sistem tarafından eklenir; talimata atıf biçimi yazmayın. Kaynak parçaları [P1], [P2] gibi kimliklerle anılır.'),
+      h('button', { type: 'submit', class: 'copy-button' }, 'Kaydet'));
+      const node = dialog(creating ? 'Yeni skill' : skill.title + ' — düzenle', form);
+    }
+    function row(skill) {
+      const [label, cls] = ORIGIN[skill.origin] || [skill.origin, ''];
+      const hidden = skill.origin === 'hidden';
+      return h('tr', {},
+        h('td', {}, h('strong', {}, skill.title), h('br'), h('small', { class: 'acct-muted' }, skill.name)),
+        h('td', {}, skill.description || '—'),
+        h('td', {}, planName(skill.minPlan), h('br'), h('small', { class: 'acct-muted' }, skill.needsSources ? 'Kaynaklı' : 'Kendi metni')),
+        h('td', {}, h('span', { class: 'adm-badge ' + cls }, label), skill.updatedAt ? h('br') : null, skill.updatedAt ? h('small', { class: 'acct-muted' }, when(skill.updatedAt) + (skill.updatedBy ? ' · ' + skill.updatedBy : '')) : null),
+        h('td', { class: 'adm-actions' },
+          h('button', { type: 'button', class: 'text-button', onclick: () => edit(skill) }, hidden ? 'Düzenle ve geri getir' : 'Düzenle'),
+          hidden ? h('button', { type: 'button', class: 'text-button', onclick: act(async () => { await api('POST', `/api/admin/skills/${skill.name}/reset`); notice(status, 'Geri getirildi.'); }) }, 'Geri getir') : null,
+          skill.origin === 'edited' ? h('button', { type: 'button', class: 'text-button', onclick: act(async () => { if (!confirm('Düzenleme atılsın ve dosyadaki sürüm kullanılsın mı?')) return; await api('POST', `/api/admin/skills/${skill.name}/reset`); notice(status, 'Dosya sürümüne dönüldü.'); }) }, 'Dosyaya dön') : null,
+          hidden || skill.name === data.defaultSkill ? null : h('button', { type: 'button', class: 'text-button', onclick: act(async () => { if (!confirm(skill.hasFile ? `"${skill.title}" kullanıcılardan gizlensin mi? (Dosya silinmez; sonra geri getirilebilir.)` : `"${skill.title}" kalıcı olarak silinsin mi?`)) return; await api('DELETE', '/api/admin/skills/' + skill.name); notice(status, 'Kaldırıldı.'); }) }, skill.hasFile ? 'Gizle' : 'Sil')));
+    }
+    const holder = h('div', {});
+    function draw() {
+      holder.replaceChildren(table(['Skill', 'Açıklama', 'Paket', 'Kaynak', ''], data.skills.map(row), 'Skill yok.'),
+        data.problems.length ? h('p', { class: 'acct-message is-error' }, 'Okunamayan skill dosyaları: ' + data.problems.join(', ')) : null);
+    }
+    await reload();
+    panel.append(status, h('p', { class: 'acct-muted' }, 'Skill\'ler yazım yardımcısının cevap biçimini belirleyen talimatlardır. Dosyalar (skills/*.md) varsayılandır; burada yaptığınız düzenleme dosyanın üzerine yazılmaz, onun yerine geçer ve sunucuyu yeniden başlatmadan uygulanır. Kullanıcılar skill\'leri düzenleyemez; yalnız paketlerinin izin verdiklerinden seçer.'),
+      h('div', { class: 'adm-toolbar' }, h('button', { type: 'button', class: 'copy-button', onclick: () => edit(null) }, 'Yeni skill')), holder);
+  }
+
   // ---- settings
   async function settings(panel) {
     const data = await api('GET', '/api/admin/settings'), status = h('div', {});
+    data.scholar = (await api('GET', '/api/admin/settings/scholar')).scholar;
     const text = (label, name, value, extra = {}) => h('label', { class: 'acct-field' }, h('span', {}, label), h('input', { name, value: value ?? '', ...extra }));
     const check = (label, name, value) => h('label', { class: 'acct-check' }, h('input', { type: 'checkbox', name, checked: !!value }), ' ' + label);
     const section = (title, lead, fields, save, extra) => { const f = h('form', { class: 'acct-form', onsubmit: guard(status, async event => { event.preventDefault(); await save(Object.fromEntries(new FormData(f)), f); notice(status, 'Kaydedildi.'); }) }, ...fields, h('button', { type: 'submit', class: 'copy-button' }, 'Kaydet'), extra); return h('details', { class: 'acct-card adm-section', open: true }, h('summary', {}, h('h3', {}, title)), lead ? h('p', { class: 'acct-muted' }, lead) : null, f); };
@@ -181,6 +333,14 @@
         const username = prompt('İsteğe bağlı: bir kullanıcı adıyla da deneyin (boş bırakabilirsiniz):') || '', password = username ? prompt('Bu kullanıcının parolası (kaydedilmez):') || '' : '';
         const r = await api('POST', '/api/admin/settings/ldap/test', { username, password }); dialog('LDAP bağlantı sınaması', h('p', { class: r.ok ? 'acct-message is-ok' : 'acct-message is-error' }, r.ok ? 'Başarılı.' : 'Başarısız.'), h('ul', {}, (r.steps || []).map(step => h('li', {}, `${step.ok ? '✓' : '✗'} ${step.name}${step.detail ? ' — ' + step.detail : ''}`))));
       }) }, 'Bağlantıyı sına (kayıtlı ayarlarla)')));
+    const scholarMsg = h('p', { class: 'acct-message', role: 'status', hidden: !scholarNote });
+    const showScholar = (text, bad = false) => { scholarNote = { text, bad }; scholarMsg.hidden = false; scholarMsg.textContent = text; scholarMsg.className = 'acct-message ' + (bad ? 'is-error' : 'is-ok'); };
+    if (scholarNote) showScholar(scholarNote.text, scholarNote.bad);
+    const scholarForm = section('Semantic Scholar (makale arama)', 'Yazım yardımcısında anahtar kelimeyle makale aramak ve açık erişimli PDF\'leri koleksiyona eklemek için. Anahtar şifrelenerek saklanır ve bir daha gösterilmez; kaydederken Semantic Scholar\'a sınanır. Anahtar yoksa ortak ve düşük sınırlı anahtarsız erişim kullanılır.', [
+      text('API anahtarı', 'key', '', { type: 'password', autocomplete: 'new-password', required: false, spellcheck: 'false', placeholder: data.scholar?.keySet ? '(kayıtlı: …' + data.scholar.last4 + ' — değiştirmek için yazın)' : data.scholar?.envKey ? '(.env dosyasındaki anahtar kullanılıyor)' : '' })],
+      async v => { if (!v.key) throw Error('Kaydetmek için bir API anahtarı yazın.'); const r = await api('PUT', '/api/admin/settings/scholar', { key: v.key }); scholarNote = r.test?.ok ? { text: 'Anahtar sınandı ve kaydedildi: ' + r.test.message, bad: false } : { text: 'Anahtar kaydedildi ancak şu an sınanamadı: ' + r.test?.message, bad: true }; render(); },
+      h('div', { class: 'adm-toolbar' }, h('button', { type: 'button', class: 'copy-button btn-secondary', onclick: async event => { const button = event.currentTarget; button.disabled = true; showScholar('Sınanıyor…'); try { const r = await api('POST', '/api/admin/settings/scholar/test'); showScholar((r.ok ? 'Başarılı: ' : 'Başarısız: ') + r.message, !r.ok); } catch (error) { showScholar('Sınama yapılamadı: ' + error.message, true); } finally { button.disabled = false; } } }, 'Kayıtlı anahtarı sına'),
+        data.scholar?.keySet ? h('button', { type: 'button', class: 'copy-button btn-secondary', onclick: guard(status, async () => { if (!confirm('Kayıtlı Semantic Scholar anahtarı silinsin mi?')) return; await api('PUT', '/api/admin/settings/scholar', { clear: true }); scholarNote = { text: 'Anahtar silindi.', bad: false }; render(); }) }, 'Anahtarı sil') : null, scholarMsg));
     const smtpForm = section('E-posta (SMTP)', 'Adres doğrulama ve parola sıfırlama iletileri için.', [
       text('Sunucu', 'host', s.host, { required: false }), text('Port', 'port', s.port || 587, { type: 'number', required: false }), check('Doğrudan TLS (465)', 'secure', s.secure), check('STARTTLS iste', 'requireTls', s.requireTls !== false),
       text('Kullanıcı', 'user', s.user, { required: false }), text('Parola', 'pass', '', { type: 'password', autocomplete: 'new-password', required: false, placeholder: s.passSet ? '(kayıtlı — değiştirmek için yazın)' : '' }),
@@ -189,14 +349,23 @@
       h('div', { class: 'adm-toolbar' }, h('button', { type: 'button', class: 'copy-button btn-secondary', onclick: guard(status, async () => {
         const to = prompt('Test iletisi hangi adrese gönderilsin?'); if (!to) return; const r = await api('POST', '/api/admin/settings/smtp/test', { to }); notice(status, r.ok ? 'Test iletisi gönderildi.' : 'Gönderilemedi: ' + r.error, !r.ok);
       }) }, 'Test iletisi gönder')));
+    const cacheStats = await api('GET', '/api/admin/cache');
+    const CACHE_NAMES = { verification: 'Doğrulanmış kaynak kayıtları', fulltext: 'Yayın tam metinleri', extraction: 'Açık erişimli PDF metinleri', embedding: 'Embedding vektörleri' };
+    const mb = bytes => bytes < 1048576 ? Math.round(bytes / 1024) + ' KB' : (bytes / 1048576).toFixed(1) + ' MB';
+    const cacheSection = h('details', { class: 'acct-card adm-section', open: true }, h('summary', {}, h('h3', {}, 'Önbellek (herkesin ortak kullandığı genel kayıtlar)')),
+      h('p', { class: 'acct-muted' }, 'Daha önce doğrulanmış kaynak kayıtları, edinilmiş yayın metinleri, açık erişimli PDF metinleri ve onların embedding\'leri burada saklanır; aynı sorgu yeniden dış servislere gönderilmez. Kullanıcıların kendi yüklediği belgeler asla buraya konmaz. Önbellekten gelen kaynaklar da kullanıcının paket kotasından düşer. En çok ' + mb(cacheStats.maxBytes) + ' tutulur, dolunca en eski kullanılanlar silinir.' + (cacheStats.enabled ? '' : ' Önbellek şu an kapalı (CACHE_ENABLED=false).')),
+      table(['Tür', 'Kayıt', 'Boyut', 'Kullanım (isabet)', ''], cacheStats.kinds.map(k => h('tr', {}, h('td', {}, CACHE_NAMES[k.kind]), h('td', {}, fmt(k.entries)), h('td', {}, mb(k.bytes)), h('td', {}, fmt(k.hits)),
+        h('td', {}, h('button', { type: 'button', class: 'text-button', disabled: !k.entries, onclick: guard(status, async () => { if (!confirm(CACHE_NAMES[k.kind] + ' silinsin mi? Bunlar gerektiğinde yeniden sorgulanır.')) return; const r = await api('DELETE', '/api/admin/cache/' + k.kind); notice(status, r.removed + ' kayıt silindi.'); render(); }) }, 'Temizle'))))));
     panel.append(status,
       section('Genel', null, [check('Yeni kayıtlara izin ver', 'registrationOpen', g.registrationOpen), h('label', { class: 'acct-field' }, h('span', {}, 'Yeni hesapların paketi'), select('defaultPlan', [['', 'İlk paket'], ...data.plans.map(p => [p.id, p.title])], g.defaultPlan || '', () => {}))],
-        async v => { await api('PUT', '/api/admin/settings/general', { registrationOpen: !!v.registrationOpen, defaultPlan: v.defaultPlan }); }), ldapForm, smtpForm);
+        async v => { await api('PUT', '/api/admin/settings/general', { registrationOpen: !!v.registrationOpen, defaultPlan: v.defaultPlan }); }), ldapForm, scholarForm, smtpForm, cacheSection);
   }
 
-  const VIEWS = { overview, users, plans, operations, audit, settings };
+  const reports = panel => window.AdminReports.mount(panel, { h, fmt, api, table, cards, when, dur });
+  const VIEWS = { overview, users, plans, operations, reports, 'llm-keys': llmKeys, prompts, skills, audit, settings };
   async function render() {
     if (!box) return;
+    clearInterval(keyTimer);
     box.replaceChildren(h('div', { class: 'acct-wrap acct-wide' }, h('h2', {}, 'Yönetim paneli'),
       h('div', { class: 'adm-tabs', role: 'tablist' }, TABS.map(([key, label]) => h('button', { type: 'button', role: 'tab', class: 'adm-tab', 'aria-selected': String(key === tab), onclick: () => { tab = key; render(); } }, label))),
       h('p', { class: 'acct-muted' }, 'Bu panel yalnızca üst veri gösterir (sayılar, türler, süreler, token ve denetim kaydı); kullanıcıların belgelerini veya yanıtlarını içermez.')));
