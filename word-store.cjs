@@ -7,7 +7,7 @@ const written=new Map();
 function file(id,suffix='.json'){if(!/^[a-f0-9-]{36}$/.test(id))throw Error('Geçersiz belge kimliği.');return path.join(root(),id+suffix);}
 function writeAtomic(target,data){const tmp=target+'.tmp';fs.writeFileSync(tmp,data);fs.renameSync(tmp,target);}
 function pdfFile(id,pdfId){if(!/^[\w-]{1,80}$/.test(pdfId))throw Error('Geçersiz PDF kimliği.');return file(id,'.pdf-'+pdfId+'.pdf');}
-function metadata(s){return {id:s.id,name:s.name,format:s.format||'docx',mode:s.mode||'word',createdAt:s.createdAt||s.touched,updatedAt:s.updatedAt||s.touched,job:s.job,pdfs:(s.pdfFiles||[]).map(({data,...v})=>v)};}
+function metadata(s){return {id:s.id,owner:s.owner||null,name:s.name,format:s.format||'docx',mode:s.mode||'word',createdAt:s.createdAt||s.touched,updatedAt:s.updatedAt||s.touched,job:s.job,pdfs:(s.pdfFiles||[]).map(({data,...v})=>v)};}
 function textsSignature(texts){return JSON.stringify(Object.entries(texts||{}).map(([key,t])=>[key,t?.passages?.length||0,t?.identity||'',!!t?.needsConfirmation,t?.access||'']));}
 function save(s){
   if(s.deleted)return;
@@ -59,9 +59,19 @@ function list(){
     return summary;
   }).sort((a,b)=>b.updatedAt-a.updatedAt);
 }
+// With accounts, every document belongs to a user. Archives made before that have no owner and were declared deletable:
+// they are removed once (a marker file records it), never again.
+function purgeUnowned(){
+  const dir=root(),marker=path.join(dir,'.owners-enabled');
+  if(!fs.existsSync(dir)||fs.existsSync(marker))return 0;
+  let removed=0;
+  for(const name of fs.readdirSync(dir))if(/^[a-f0-9-]{36}\./.test(name)){fs.rmSync(path.join(dir,name),{force:true});if(name.endsWith('.json')&&!name.endsWith('.meta.json'))removed++;}
+  fs.writeFileSync(marker,'owners enabled '+new Date().toISOString());
+  return removed;
+}
 function remove(id){
   file(id);written.delete(id);
   if(!fs.existsSync(root()))return;
   for(const name of fs.readdirSync(root()))if(name.startsWith(id+'.'))fs.rmSync(path.join(root(),name),{force:true});
 }
-module.exports={save,load,list,remove,root};
+module.exports={save,load,list,remove,root,purgeUnowned};

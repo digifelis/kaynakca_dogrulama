@@ -2,7 +2,7 @@
 name: bulgular-yaz
 title: Bulgular bölümü yaz
 description: Verilen sonuçları ve kaynaklardaki bulguları düzenli bir bulgular metnine çevirir.
-plans: [basic, premium, gold]
+minPlan: basic
 keywords: [bulgular, sonuçlar, results, findings, tablo, istatistik]
 needsSources: true
 ---

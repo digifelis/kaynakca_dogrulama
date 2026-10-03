@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const wordService = require('./word-service.cjs');
 const writerService = require('./writer-service.cjs');
+const { createAuthService } = require('./auth-service.cjs');
+const { createAdminService } = require('./admin-service.cjs');
 const webInspect = require('./web-source.cjs').createService();
 
 // Only this local project file is read; keys are never returned to the browser.
@@ -50,14 +52,27 @@ function json(res, status, body, headers = {}) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers });
   res.end(JSON.stringify(body));
 }
-function createServer({ inspectWeb = webInspect } = {}) {
+// Hosts this server answers to: localhost always, plus the public address (PUBLIC_URL) and ALLOWED_HOSTS behind a TLS proxy.
+function allowedHosts() {
+  const hosts = new Set(['localhost', '127.0.0.1', '[::1]']);
+  for (const name of String(process.env.ALLOWED_HOSTS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean)) hosts.add(name);
+  try { if (process.env.PUBLIC_URL) hosts.add(new URL(process.env.PUBLIC_URL).hostname.toLowerCase()); } catch { /* ignored: validated at startup */ }
+  return hosts;
+}
+// With accounts (app = createApp()), /api/auth and /api/admin are served and Word/writer calls need a session.
+function createServer({ inspectWeb = webInspect, app = null, writerStore = null } = {}) {
+  const hosts = allowedHosts();
+  const authService = app ? createAuthService({ auth: app.auth, usage: app.usage }) : null;
+  const adminService = app ? createAdminService({ app, writerStore: writerStore || (() => { try { return require('./lib/writer-store.cjs').defaultStore(); } catch { return null; } })(), wordService }) : null;
   return http.createServer(async (req, res) => {
-    const host = (req.headers.host || '').split(':')[0];
-    if (!['localhost', '127.0.0.1'].includes(host)) return json(res, 403, { error: 'Yerel erişim gerekli' });
+    const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+    if (!hosts.has(host)) return json(res, 403, { error: 'Yerel erişim gerekli' });
     // The Host was checked above; behind a container port mapping the browser's port differs from ours.
-    if (req.headers.origin && !['http://localhost:' + req.socket.localPort, 'http://127.0.0.1:' + req.socket.localPort, 'http://' + req.headers.host].includes(req.headers.origin)) return json(res, 403, { error: 'Farklı kökenden erişim reddedildi' });
+    if (req.headers.origin && !['http://localhost:' + req.socket.localPort, 'http://127.0.0.1:' + req.socket.localPort, 'http://' + req.headers.host, 'https://' + req.headers.host].includes(req.headers.origin)) return json(res, 403, { error: 'Farklı kökenden erişim reddedildi' });
     try {
       const url = new URL(req.url, 'http://localhost');
+      if (authService && await authService.handle(req, res, url, json)) return;
+      if (adminService && await adminService.handle(req, res, url, json)) return;
       if (await wordService.handle(req, res, url, json)) return;
       if (await writerService.handle(req, res, url, json)) return;
       if (await handleBatches(req, res, url)) return;
@@ -90,7 +105,7 @@ function createServer({ inspectWeb = webInspect } = {}) {
         return json(res, result.status, result.body, result.retryAfter ? { 'Retry-After': result.retryAfter } : {});
       }
       const files = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/pages.js': ['pages.js', 'text/javascript'], '/ui.js': ['ui.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'],
-        '/web-reference.js': ['web-reference.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/writer-app.js': ['writer-app.js', 'text/javascript'], '/writer-cite.js': ['writer-cite.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
+        '/web-reference.js': ['web-reference.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/writer-app.js': ['writer-app.js', 'text/javascript'], '/auth-app.js': ['auth-app.js', 'text/javascript'], '/admin-app.js': ['admin-app.js', 'text/javascript'], '/writer-cite.js': ['writer-cite.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
       const file = files[url.pathname];
       if (!file) return json(res, 404, { error: 'Dosya bulunamadı' });
       res.writeHead(200, { 'Content-Type': `${file[1]}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -111,9 +126,20 @@ async function useQueue() {
 if (require.main === module) {
   loadEnv();
   const port = Number(process.env.PORT) || 4173;
-  useQueue().then(queued => {
+  (async () => {
+    // Accounts: database, default administrator, per-user documents and token accounting.
+    const { createApp } = require('./lib/app.cjs');
+    const Plans = require('./lib/plans.cjs');
+    const app = createApp();
+    await app.auth.bootstrapAdmin();
+    wordService.useUsage(app.usage);
+    wordService.useGuard(userId => { const user = app.accounts.users.byId(userId); if (user) Plans.enforce(app.auth.effectivePlan(user), 'monthlyTokens', app.usage.monthTokens(userId)); });
+    const purged = wordService.purgeLegacy();
+    if (purged) console.log(`Hesap sistemi etkinleştirildi: sahipsiz ${purged} eski Word belgesi silindi.`);
+    writerService.configure({ usage: app.usage });
+    const queued = await useQueue();
     const services = queued ? ` (kuyruk: ${process.env.QUEUE_URL}; doğrulama servisi: ${Backend.workers('verify').length}, LLM servisi: ${Backend.workers('llm').length})` : ' (yerel mod)';
-    createServer().listen(port, process.env.HOST || '127.0.0.1', () => console.log(`Kaynakça Masası: http://localhost:${port}/${services}`));
-  }, error => { console.error(error.message); process.exit(1); });
+    createServer({ app }).listen(port, process.env.HOST || '127.0.0.1', () => console.log(`Kaynakça Masası: http://localhost:${port}/${services}`));
+  })().catch(error => { console.error(error.message); process.exit(1); });
 }
-module.exports = { allowedTarget, createServer, credentials, useQueue };
+module.exports = { allowedTarget, createServer, credentials, useQueue, allowedHosts };

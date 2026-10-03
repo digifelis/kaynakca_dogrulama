@@ -1,0 +1,17 @@
+{
+  "name": "kaynakca-masasi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kaynakça Masası",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --no-warnings --test tests/*.test.cjs",
+    "start": "node server.cjs"
+  },
+  "dependencies": {
+    "ldapts": "^9.2.0",
+    "nodemailer": "^10.0.13"
+  }
+}

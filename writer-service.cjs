@@ -31,6 +31,8 @@ function createService(options = {}) {
     llm: options.llm || require('./word-content.cjs'),
     python: options.python || require('./lib/python.cjs').python,
     verifyMeta: options.verifyMeta || Meta.verify,
+    // Operation log with token counts (null without accounts): see lib/usage.cjs.
+    usage: options.usage || { run: (o, fn) => fn(), monthTokens: () => 0 },
   };
   const pending = new Set();                 // background work, awaited by idle() in tests
   const controllers = new Map();             // document id -> AbortController
@@ -55,7 +57,7 @@ function createService(options = {}) {
       incomplete: Cite.tokenRefs(m.text).some(ref => Cite.renderGroup([ref], byId, 'tr').incomplete) };
   }
   function usageOf(userId, plan) {
-    return { questionsToday: db().questionsToday(userId), projects: db().countProjects(userId), limits: Plans.limitsFor(plan) };
+    return { questionsToday: db().questionsToday(userId), projects: db().countProjects(userId), monthTokens: deps.usage.monthTokens(userId), limits: Plans.limitsFor(plan) };
   }
   function projectPayload(userId, plan, projectId) {
     const project = db().getProject(userId, projectId);
@@ -116,9 +118,12 @@ function createService(options = {}) {
       if (db().getDocument(userId, doc.id)) verifyInBackground(userId, doc.id);
     } catch (error) {
       if (db().getDocument(userId, doc.id)) db().updateDocument(userId, doc.id, { status: 'error', error: error.message || 'Belge işlenemedi.' });
+      throw error;
     } finally { controllers.delete(doc.id); }
   }
-  const enqueue = (...args) => track(processing(() => processDocument(...args)));
+  // Embedding a source is an operation of its owner (tokens are estimated from the text size).
+  const enqueue = (userId, projectId, doc, buffer, format, limit) => track(processing(() =>
+    deps.usage.run({ userId, kind: 'source-process', projectId, detail: { format, bytes: buffer.length } }, () => processDocument(userId, projectId, doc, buffer, format, limit)).catch(() => {})));
 
   // ---- questions
   function history(userId, projectId, byId, skipIds) {
@@ -154,6 +159,7 @@ function createService(options = {}) {
     } catch (error) {
       const wait = error.quota && error.retryAt ? ` ${Math.max(1, Math.round((error.retryAt - Date.now()) / 1000))} saniye sonra tekrar deneyin.` : '';
       update({ status: 'error', error: (error.message || 'Yanıt üretilemedi.') + wait, flags: {} });
+      throw error;
     }
   }
   function startAsk(userId, plan, projectId, input) {
@@ -167,11 +173,13 @@ function createService(options = {}) {
     if (!db().getProject(userId, projectId)) throw httpError(404, 'Proje bulunamadı.');
     if (db().listMessages(userId, projectId, 10).some(m => m.status === 'working')) throw httpError(409, 'Önceki yanıt hazırlanıyor; bitmesini bekleyin.');
     Plans.enforce(plan, 'questionsPerDay', db().questionsToday(userId));
+    Plans.enforce(plan, 'monthlyTokens', deps.usage.monthTokens(userId));
     db().addQuestion(userId);
     const asked = db().addMessage(userId, projectId, { role: 'user', text: question, skill: skill.name });
     const reply = db().addMessage(userId, projectId, { role: 'assistant', skill: skill.name, status: 'working' });
     db().touchProject(userId, projectId);
-    track(runAsk(userId, plan, projectId, reply, { question, skill, useManuscript: input.useManuscript === true, questionId: asked.id }));
+    track(deps.usage.run({ userId, kind: 'ask', projectId, detail: { skill: skill.name, draft: input.useManuscript === true } },
+      () => runAsk(userId, plan, projectId, reply, { question, skill, useManuscript: input.useManuscript === true, questionId: asked.id })).catch(() => {}));
     return reply;
   }
 
@@ -206,14 +214,14 @@ function createService(options = {}) {
     port = req.socket.localPort || port;
     try {
       if (req.method !== 'GET' && req.headers['x-word-request'] !== '1') return json(res, 403, { error: 'Yerel uygulama isteği gerekli.' }), true;
-      const { userId, plan } = Identity.resolveUser(req, res);
+      const { userId, plan } = Identity.requireUser(req, res);
       const route = url.pathname.slice('/api/writer'.length).replace(/\/$/, '');
       let m;
 
       if (route === '/bootstrap' && req.method === 'GET') {
         const available = Skills.forPlan(plan).map(Skills.publicView), names = new Set(available.map(s => s.name));
-        const locked = Skills.load().skills.filter(s => !names.has(s.name)).map(s => ({ name: s.name, title: s.title, description: s.description, plans: s.plans }));
-        return json(res, 200, { plan: { id: Plans.known(plan), title: Plans.PLANS[Plans.known(plan)].title, nextPlan: Plans.nextPlan(plan) }, usage: usageOf(userId, plan),
+        const locked = Skills.load().skills.filter(s => !names.has(s.name)).map(s => ({ name: s.name, title: s.title, description: s.description, minPlan: Skills.publicView(s).minPlan }));
+        return json(res, 200, { plan: { id: Plans.known(plan), title: Plans.get(plan).title, nextPlan: Plans.nextPlan(plan) }, plans: Plans.list().map(p => ({ id: p.id, title: p.title })), usage: usageOf(userId, plan),
           skills: available, lockedSkills: locked, defaultSkill: Skills.DEFAULT_SKILL,
           services: { llm: !!deps.llm.llmAvailable(), embedding: !!deps.embed.available() }, projects: db().listProjects(userId) }), true;
       }
@@ -245,6 +253,7 @@ function createService(options = {}) {
           const format = /\.pdf$/i.test(name) ? 'pdf' : /\.docx$/i.test(name) ? 'docx' : '';
           if (!format) throw httpError(400, 'Yalnız Word (.docx) ve PDF desteklenir; .doc dosyasını Word’de .docx olarak kaydedin.');
           Plans.enforce(plan, 'documentsPerProject', db().countDocuments(userId, projectId));
+          Plans.enforce(plan, 'monthlyTokens', deps.usage.monthTokens(userId));
           const buffer = decodeFile(input.data, limits.documentBytes);
           if (format === 'pdf' ? !buffer.subarray(0, 5).equals(Buffer.from('%PDF-')) : !(buffer[0] === 0x50 && buffer[1] === 0x4b)) throw httpError(400, format === 'pdf' ? 'Geçerli PDF değil.' : 'Geçerli Word dosyası değil.');
           const doc = db().addDocument(userId, projectId, { fileName: name });
@@ -272,7 +281,7 @@ function createService(options = {}) {
             if (doc.status === 'processing' || doc.status === 'embedding') throw httpError(409, 'Kaynak şu anda işleniyor.');
             if (!doc.chunkCount) throw httpError(400, 'Metin çıkarılamadığı için bu kaynağı yeniden yükleyin.');
             db().updateDocument(userId, doc.id, { status: 'processing', error: null });
-            track(processing(async () => { const controller = new AbortController(); controllers.set(doc.id, controller); try { await finishEmbedding(userId, doc, controller.signal); } finally { controllers.delete(doc.id); } }));
+            track(processing(() => deps.usage.run({ userId, kind: 'source-embed', projectId, detail: { retry: true } }, async () => { const controller = new AbortController(); controllers.set(doc.id, controller); try { await finishEmbedding(userId, doc, controller.signal); } finally { controllers.delete(doc.id); } }).catch(() => {})));
             return json(res, 202, { source: documentView(db().getDocument(userId, doc.id)) }), true;
           }
         }
@@ -309,4 +318,6 @@ function createService(options = {}) {
 
 let shared = null;
 const service = () => shared ||= createService();
-module.exports = { createService, handle: (...args) => service().handle(...args), httpError };
+// The server swaps in a service wired to the operation log once accounts are on.
+function configure(options) { return shared = createService(options); }
+module.exports = { createService, configure, handle: (...args) => service().handle(...args), httpError };

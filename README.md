@@ -4,11 +4,14 @@ Kaynakçayı yapıştırıp açık akademik kayıtlarla karşılaştıran, güç
 
 ## Çalıştırma
 
-Node.js 20 veya üzeri gerekir. Kurulum veya derleme adımı yoktur. Proje klasöründe:
+Node.js 22.13 veya üzeri gerekir (yerleşik `node:sqlite`). İlk kurulumda bağımlılıklar (LDAP için `ldapts`, e-posta için `nodemailer`) yüklenir; derleme adımı yoktur. Proje klasöründe:
 
 ```powershell
+npm ci
 node server.cjs
 ```
+
+İlk açılışta **`admin@admin.com` / `admin`** yönetici hesabı oluşturulur ve ilk girişte parolanın değiştirilmesi zorunludur (bkz. [Hesaplar ve yönetim paneli](#hesaplar-ve-yönetim-paneli)).
 
 Sonra `http://localhost:4173/` adresini açın. `QUEUE_URL` tanımlı değilse uygulama bu **yerel modda** her işi kendi içinde yapar.
 
@@ -196,11 +199,27 @@ Kullanıcı bir **proje** açar, bir veya birden çok PDF/Word **kaynak** yükle
 - **Künye:** dosya özelliklerinden, ilk sayfadan ve DOI'den tahmin edilir, doğrulama motoruyla (Crossref vb.) denetlenir; kullanıcı düzeltip onaylayabilir. Doğrulanmamış künye arayüzde açıkça işaretlenir; künye düzeltilince cevaplardaki ve makaledeki atıflar ile kaynakça otomatik güncellenir.
 - **Cevaplar ve atıf:** model yalnız hangi parçanın hangi cümleyi desteklediğini işaretler (`[P3]`); görünen **APA 7 (Yazar, Yıl, s. N)** atfını sunucu kaynağın künyesinden üretir, model atıf uyduramaz. Kaynaklarda bilgi yoksa cevap bunu söyler.
 - **Skill'ler:** `skills/*.md` dosyaları (başlık, açıklama, `plans`, `keywords`, `needsSources`, talimat). Kullanıcı seçer veya "Otomatik"te soruya göre önerilir. Yeni skill için `skills/_sablon.md` dosyasını kopyalayın; dosya adı ile `name` aynı olmalıdır. Yalnız yönetici düzenler (depodaki klasör; `SKILLS_DIR` ile değiştirilebilir).
-- **Kimlik ve paketler:** şimdilik tarayıcıya verilen imzalı çerezle anonim kimlik ve `basic` paket (`lib/identity.cjs`). Gerçek giriş geldiğinde yalnız `resolveUser` değişir. Limitler `lib/plans.cjs` içindedir (basic: 10 proje, projede 20 belge, belge başına 50 MB, günde 200 soru; **premium ve gold değerleri geçicidir**, siz belirleyin). Limit aşımında kullanıcıya üst paket önerisi gösterilir.
+- **Kimlik ve paketler:** gerçek hesaplar (aşağıdaki bölüm). Paketler ve limitleri veritabanındadır, yönetim panelinden düzenlenir; varsayılanlar `lib/plans.cjs` içindedir (basic: 10 proje, projede 20 belge, belge başına 50 MB, günde 200 soru, ayda 300 000 token; **premium ve gold değerleri geçicidir**). Limit aşımında kullanıcıya üst paket önerisi gösterilir.
 - **İzolasyon:** her SQLite sorgusu `user_id` ile süzülür (`lib/writer-store.cjs`); bir kullanıcı veya proje başka birinin parçalarını, vektörlerini, mesajlarını ya da makalesini göremez. Aynı belge iki projeye yüklenirse embedding her projede ayrı hesaplanır.
-- **Veri:** `WRITER_DATA_DIR` (Docker: `/data/writer`, `web-data` birimi) altında `writer.db` (SQLite) ve `identity.secret`. Birden çok web sunucusunda aynı kimlikler için `IDENTITY_SECRET` ortak verilir.
+- **Veri:** `WRITER_DATA_DIR` (Docker: `/data/writer`, `web-data` birimi) altında `writer.db` (yazım yardımcısı), `app.db` (hesaplar, oturumlar, paketler, ayarlar, işlem günlüğü, denetim kaydı), `settings.secret` ve `identity.secret`.
 - **Ayarlar (LLM servisi `.env`):** `GEMINI_API_KEY`, `GEMINI_EMBEDDING_MODEL` (varsayılan `gemini-embedding-001`; `gemini-embedding-2` de desteklenir), `GEMINI_EMBEDDING_DIM` (768). `WRITER_PASSAGES`: bir soruya verilen parça sayısı (6).
 - **Makale:** otomatik kaydedilir (eski pencere eziyorsa 409 ile reddedilir); **Word olarak indir** atıfları güncel künyeyle yazar ve kaynakçayı ekler.
 - **Gizlilik:** kaynak metinleri Gemini'ye (embedding) ve Groq/OpenRouter'a (cevap) gider; yükleme öncesi kullanıcı onayı istenir.
 
 Testler: `node --test tests/writer-units.test.cjs tests/writer-service.test.cjs tests/writer-pdf.test.cjs tests/writer-embed-queue.test.cjs`. `node:sqlite` için Node 22.13+ gerekir (Docker imajı Node 24).
+
+## Hesaplar ve yönetim paneli
+
+Kaynakça doğrulama sayfası (`#/kaynakca`) girişsiz kullanılır; **Yetim kaynak kontrolü, İçerik kontrolü ve Yazım yardımcısı giriş gerektirir** ve her kullanıcı yalnız kendi verisini görür.
+
+- **Giriş yöntemleri:** yerel hesap (açık kayıt; kullanıcı adı + parola, e-posta isteğe bağlı) ve **LDAP** (yönetim panelinden ayarlanır). Parolalar `scrypt` ile saklanır; oturum çerezi `HttpOnly` + `SameSite=Strict` (HTTPS arkasında `Secure`) ve veritabanında yalnız karması tutulur, 14 gün kayar. Hesap ve IP başına ardışık hatalı denemeler artan süreyle kilitlenir. Parola politikası: en az 10 karakter, kolay tahmin edilen ve kullanıcı adını içeren parolalar reddedilir.
+- **İlk yönetici:** hiç yönetici yoksa `admin@admin.com` / `admin` oluşturulur (`ADMIN_USERNAME` / `ADMIN_PASSWORD` ile değiştirilebilir). **İlk girişte parola değişimi zorunludur;** değişene kadar başka hiçbir sayfa/API açılmaz. E-posta isteğe bağlıdır; profil sayfasından eklenir ve bağlantıyla doğrulanır.
+- **E-posta ve parola sıfırlama:** yönetim panelindeki SMTP ayarıyla çalışır. Sıfırlama yalnız **doğrulanmış** adreslere gider, bağlantı 1 saat geçerlidir ve bir kez kullanılır; yanıtlar hesabın var olup olmadığını belli etmez.
+- **LDAP:** panelden sunucu adresi (`ldap://`, `ldaps://` ya da StartTLS), servis hesabı, arama tabanı, kullanıcı filtresi (`(uid={username})`), öznitelikler ve **grup → paket / yönetici eşlemeleri** girilir; "Bağlantıyı sına" düğmesi adım adım sonuç verir. Servis hesabı parolası AES-256-GCM ile şifrelenir (`SETTINGS_SECRET` ya da `settings.secret` dosyası) ve arayüze geri gönderilmez. Kullanıcı ilk girişte otomatik oluşturulur; paketi her girişte gruplardan güncellenir. Dizinde bulunan bir adla yerel kayıt açılamaz.
+- **Paketler:** panelden eklenir/düzenlenir (proje, projedeki kaynak, dosya boyutu, günlük soru, **aylık token kotası**; `0` = sınırsız). Kullanıcıya paket ve isteğe bağlı bitiş tarihi atanır; süresi dolan kullanıcı varsayılan pakete döner. Sıra yükseltme önerisini ve skill erişimini (`minPlan`) belirler.
+- **İşlem takibi ve token:** yazım yardımcısındaki soru-cevap, kaynak işleme/vektörleme, Word kaynakça doğrulama ve içerik kontrolü ayrı işlem olarak kaydedilir (süre, durum, hata, çağrı başına sağlayıcı/model/token). Sağlayıcı token bildirdiğinde değer kesindir; bildirmediğinde (Gemini embedding) **tahmindir** ve `~` ile işaretlenir. Aylık kota aşıldığında istek 429 ve paket yükseltme önerisiyle reddedilir; sayaç ay başında sıfırlanır.
+- **Yönetim paneli (`#/admin`):** genel bakış (günlük/aylık/toplam token, işlem türü ve modele göre kırılım, en çok kullananlar, son hatalar), kullanıcı yönetimi (oluştur, ara, paket/rol/durum, geçici parola sıfırlama, oturumları kapatma, silme; son yönetici ve kendi hesabınızı koruyan kurallarla), paketler, işlem listesi ve çağrı ayrıntısı, denetim kaydı ve ayarlar (kayıt aç/kapat, LDAP, SMTP). Panel **yalnız üst veri** gösterir; kullanıcıların belgeleri, soruları ve cevapları yöneticiye de açılmaz.
+- **Eski Word arşivi:** hesaplara geçişte sahibi olmayan eski anonim Word/içerik arşivi (`WORD_ARCHIVE_DIR`) bir kez ve geri alınamaz biçimde silinir (`.owners-enabled` işareti).
+- **Ortam değişkenleri:** `PUBLIC_URL` (e-posta bağlantıları ve `Secure` çerez için, örn. `https://kaynak.ornek.com`), `ALLOWED_HOSTS` (virgülle ayrılmış ek ana bilgisayar adları), `TRUST_PROXY=1` (ters vekil arkasında istemci IP'si için `X-Forwarded-For`), `SETTINGS_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `IDENTITY_SECRET`.
+
+Testler: `node --no-warnings --test tests/auth.test.cjs tests/admin-usage.test.cjs`.

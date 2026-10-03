@@ -2,7 +2,7 @@
 name: giris-yaz
 title: Giriş bölümü yaz
 description: Kaynaklara dayanarak makalenin giriş paragraflarını üretir.
-plans: [basic, premium, gold]
+minPlan: basic
 keywords: [giriş, introduction, amaç, problem, önem, arka plan]
 needsSources: true
 ---

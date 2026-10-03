@@ -23,8 +23,9 @@
         <a href="#/word" data-page-link="word">Yetim kaynak kontrolü</a>
         <a href="#/icerik" data-page-link="icerik">İçerik kontrolü</a>
         <a href="#/yazim" data-page-link="yazim">Yazım yardımcısı</a>
+        <a href="#/admin" data-page-link="admin" hidden>Yönetim</a>
       </nav>
-      <p class="topbar-note"><span class="signal-dot" aria-hidden="true"></span>Belgeleriniz bu bilgisayarda kalır</p>
+      <div id="account-menu" class="account-menu" aria-label="Hesap"></div>
     </header>
 
     <main id="top" class="shell">
@@ -33,6 +34,9 @@
         <p class="hero-lede">Kaynak listenizi yapıştırın, akademik kayıtlarla karşılaştırın ve düzeltilmiş APA 7 çıktısını alın.</p>
       </section>
 
+      <div id="page-giris" class="app-page" hidden></div>
+      <div id="page-profil" class="app-page" hidden></div>
+      <div id="page-admin" class="app-page" hidden></div>
       <div id="page-word" class="app-page" hidden>
       <section id="word-workspace" class="workbench word-workbench" aria-labelledby="word-title">
         <h2 id="word-title" class="sr-only">Word makalesi ve atıf kontrolü</h2>
@@ -313,6 +317,8 @@
     <script src="word-app.js" defer></script>
     <script src="writer-cite.js" defer></script>
     <script src="writer-app.js" defer></script>
+    <script src="auth-app.js" defer></script>
+    <script src="admin-app.js" defer></script>
     <script src="pages.js" defer></script>
     <script src="ui.js" defer></script>
   </body>

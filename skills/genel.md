@@ -2,7 +2,7 @@
 name: genel
 title: Kaynaklara soru sor
 description: Yüklediğiniz kaynaklara dayanarak sorunuzu yanıtlar.
-plans: [basic, premium, gold]
+minPlan: basic
 keywords: [nedir, nasıl, neden, açıkla, anlat]
 needsSources: true
 ---

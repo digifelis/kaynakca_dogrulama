@@ -2,7 +2,7 @@
 name: literatur-ozeti
 title: Literatür özeti
 description: Yüklenen kaynakları konularına göre özetler.
-plans: [basic, premium, gold]
+minPlan: basic
 keywords: [özet, özetle, literatür, summary, derleme, kaynakları özetle]
 needsSources: true
 ---

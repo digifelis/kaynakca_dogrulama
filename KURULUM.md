@@ -330,3 +330,27 @@ docker run -d --name web --restart unless-stopped \
 Kontrol: `curl -s -H "x-word-request: 1" http://127.0.0.1:4173/api/writer/bootstrap` yanıtında `services.llm` ve `services.embedding` alanları `true` olmalıdır (kuyruklu kurulumda llm servisi çalışıyorsa).
 
 Yedekleme: `docker run --rm -v web-data:/data -v "$PWD:/backup" alpine tar czf /backup/web-data.tgz /data`.
+
+---
+
+## 9. Hesaplar, yönetici girişi ve ayarlar
+
+Web sunucusu artık giriş ister (yalnız kaynakça doğrulama sayfası açıktır). Bağımlılıklar imajda `npm ci` ile kurulur; elle çalıştırıyorsanız önce `npm ci` yapın.
+
+**İlk giriş:** web ilk kez başladığında günlükte "İlk yönetici hesabı oluşturuldu" yazar. `http://SUNUCU:4173/#/giris` adresinde **`admin@admin.com` / `admin`** ile girin; sistem parolayı hemen değiştirmenizi ister. Başka bir ilk hesap istiyorsanız `-e ADMIN_USERNAME=... -e ADMIN_PASSWORD=...` verin (parola 10+ karakter olmalı). Kurulumdan hemen sonra parolayı değiştirmeden sunucuyu internete açmayın.
+
+| Ayar | Açıklama |
+|---|---|
+| `PUBLIC_URL` | Dışarıdan görünen adres (`https://kaynak.ornek.com`). E-postadaki doğrulama/sıfırlama bağlantıları ve `Secure` çerez için. TLS ters vekil kullanıyorsanız **verin**. |
+| `ALLOWED_HOSTS` | `localhost` dışında hangi ana bilgisayar adlarıyla erişilebileceği (virgülle). `PUBLIC_URL` adresi otomatik kabul edilir; diğer adlar 403 alır. |
+| `TRUST_PROXY=1` | Ters vekil (nginx vb.) arkasında istemci IP'sini `X-Forwarded-For` başlığından okur; hatalı giriş kilitleri için gerekir. Vekil yoksa **vermeyin**. |
+| `SETTINGS_SECRET` | LDAP/SMTP parolalarını şifreleyen anahtar. Verilmezse `/data/writer/settings.secret` dosyası üretilir. |
+| `IDENTITY_SECRET` | Bkz. Bölüm 8. |
+
+**Veri ve yedek:** hesaplar, paketler, ayarlar ve token günlüğü `/data/writer/app.db` içindedir (`web-data` birimi). Birimi yedekleyin; `settings.secret` kaybolursa kayıtlı LDAP/SMTP parolaları çözülemez ve panelden yeniden girilmelidir. Hesaplar tek bir `app.db` dosyasındadır; bu yüzden **şimdilik tek web sunucusu** kullanın (verify ve service sunucularını çoğaltabilirsiniz).
+
+**Eski Word arşivi:** hesaplara geçildiğinde sahibi olmayan eski Word/içerik belgeleri ilk açılışta **bir kez silinir** (günlükte sayısı yazılır).
+
+**Yönetim paneli:** yönetici girişinden sonra üst menüde "Yönetim" görünür. LDAP için *Ayarlar → LDAP girişi*; sunucu (`ldaps://ldap.kurum.edu.tr:636`), servis hesabı, arama tabanı ve filtre girilip *Bağlantıyı sına* ile denenir. SMTP için *Ayarlar → E-posta (SMTP)*; *Test iletisi gönder* ile denenir. E-posta ayarlanmazsa "Parolamı unuttum" gizlenir ve adres doğrulama yapılamaz.
+
+**Ağ notu:** web sunucusu LDAP sunucusuna (389/636) ve SMTP sunucusuna (587/465) giden bağlantı açabilmelidir.

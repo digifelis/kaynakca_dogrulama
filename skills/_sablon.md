@@ -2,7 +2,7 @@
 name: ornek-skill
 title: Skill'in kullanıcıya görünen adı
 description: Başlığın yanında gösterilen tek cümlelik açıklama.
-plans: [basic, premium, gold]
+minPlan: basic
 keywords: [soruda, geçen, anahtar, sözcükler]
 needsSources: true
 ---

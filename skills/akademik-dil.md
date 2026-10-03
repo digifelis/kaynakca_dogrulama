@@ -2,7 +2,7 @@
 name: akademik-dil
 title: Akademik dile çevir
 description: Verdiğiniz metni akademik üsluba yeniden yazar; kaynak gerektirmez.
-plans: [basic, premium, gold]
+minPlan: basic
 keywords: [akademik, üslup, yeniden yaz, düzelt, resmi, dil, paraphrase]
 needsSources: false
 ---

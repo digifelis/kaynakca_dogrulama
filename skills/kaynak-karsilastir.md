@@ -2,7 +2,7 @@
 name: kaynak-karsilastir
 title: Kaynakları karşılaştır
 description: Yüklenen kaynakların benzerlik ve farklarını ortaya koyar.
-plans: [premium, gold]
+minPlan: premium
 keywords: [karşılaştır, fark, benzerlik, ortak, çelişki, compare, contrast]
 needsSources: true
 ---

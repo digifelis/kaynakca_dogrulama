@@ -7,7 +7,7 @@
   const S = { boot: null, projectId: null, data: null, revision: 0, conflict: false, dirty: false, poll: null, saveTimer: null, suggestTimer: null, sourcesSig: '', messagesSig: '', renderLater: false };
   const memory = { get(key) { try { return localStorage.getItem(key); } catch { return null; } }, set(key, value) { try { localStorage.setItem(key, value); } catch { /* storage unavailable */ } } };
   const esc = Cite.escapeHtml;
-  const PLAN_NAMES = { basic: 'Basic', premium: 'Premium', gold: 'Gold' };
+  const planTitle = id => (S.boot?.plans || []).find(plan => plan.id === id)?.title || id;
   const sourcesById = () => Object.fromEntries((S.data?.sources || []).map(source => [source.id, source]));
 
   async function api(method, path, body, raw) {
@@ -64,7 +64,7 @@
     const select = $('skill'), current = select.value;
     select.innerHTML = '<option value="">Otomatik (soruya göre öner)</option>'
       + S.boot.skills.map(skill => `<option value="${esc(skill.name)}">${esc(skill.title)}</option>`).join('')
-      + S.boot.lockedSkills.map(skill => `<option value="" disabled>${esc(skill.title)} — ${esc(PLAN_NAMES[skill.plans[0]] || '')} paket</option>`).join('');
+      + S.boot.lockedSkills.map(skill => `<option value="" disabled>${esc(skill.title)} — ${esc(planTitle(skill.minPlan))} paket</option>`).join('');
     select.value = [...select.options].some(option => option.value === current) ? current : '';
   }
   function renderProjectList() {

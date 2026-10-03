@@ -1,10 +1,12 @@
-# Kaynakça Masası images. No npm dependencies: the code is copied as is.
+# Kaynakça Masası images. npm dependencies (ldapts for directory sign-in, nodemailer for e-mail) are installed once in the base stage.
 #   service: queue and LLM services (node only)
 #   python:  verification service (adds Python + pypdf for full-text PDFs)
 #   web:     the web application (Python + pypdf for Word/PDF manuscripts; writing assistant data in /data/writer)
 FROM node:24-alpine AS service
 WORKDIR /app
 ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 COPY --chown=node:node . .
 RUN mkdir -p /data && chown node:node /data
 USER node

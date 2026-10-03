@@ -2,7 +2,7 @@
 name: tartisma-yaz
 title: Tartışma bölümü yaz
 description: Bulguları kaynaklardaki çalışmalarla karşılaştırarak tartışma paragrafları üretir.
-plans: [basic, premium, gold]
+minPlan: basic
 keywords: [tartışma, discussion, yorum, karşılaştır, sınırlılık, öneri]
 needsSources: true
 ---

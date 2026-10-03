@@ -156,4 +156,5 @@ Geliştirme `makale_olusturucu` dalında sürdürülür (`mikroservis` dalından
 - Kaynak parçaları PDF'de başladıkları sayfayla atıflanır; sayfa sınırını geçen paragraf okuyucu tarafından birleştirildiği için başladığı sayfa gösterilir. Word dosyalarında güvenilir sayfa numarası olmadığından sayfa atfı verilmez.
 - Premium ve gold limitleri geçici değerlerdir (`lib/plans.cjs`); gerçek değerleri sahibi belirler.
 - Paket limiti belge boyutu Python okuyucuya `limit` olarak iletilir (en çok 200 MB); çok büyük PDF'ler okuyucunun 45 saniyelik süre sınırına takılabilir ve açık bir hata iletisiyle reddedilir.
-- Yapılmadı (kapsam dışı): OCR, seçili metni skill ile yeniden yazma, giriş sistemi, skill'leri arayüzden yönetme.
+- Yapılmadı (kapsam dışı): OCR, seçili metni skill ile yeniden yazma, skill'leri arayüzden yönetme.
+- Giriş sistemi ve yönetim paneli sonradan eklendi (3 Ekim 2026): yerel hesap + LDAP, DB'de paketler, aylık token kotası, işlem günlüğü. `lib/identity.cjs` artık oturum çözümleyiciyi (`lib/app.cjs`) kullanır; anonim çerez yalnız testlerde kalır. Skill erişimi `plans:` listesi yerine `minPlan` (paket sırası) ile belirlenir. Premium/gold limitleri ve aylık token varsayılanları hâlâ geçicidir; panelden değiştirilir.

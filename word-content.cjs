@@ -1,4 +1,5 @@
 const https = require('node:https');
+const UsageContext=require('./lib/usage-context.cjs');
 const dns = require('node:dns').promises;
 const net = require('node:net');
 const Engine = require('./reference-engine.js');
@@ -273,7 +274,7 @@ async function chat({name,schema,system,user,maxTokens=2500,maxWaitMs},signal,on
       if(response.status===429||response.status>=500){const headerDelay=quotaDelay(response),fallback=provider==='OpenRouter'?3000:60000;const delay=Number.isFinite(headerDelay)?headerDelay:Math.min(900000,fallback*2**Math.min(attempts++,4));providerNext[provider]=Math.max(providerNext[provider],Date.now()+Math.max(1000,delay));onDebug({kind:'wait',scope:'groq',provider,model,status:response.status,detail:provider==='OpenRouter'?'OpenRouter tüm model alternatiflerinden yanıt alamadı. Model sırası değiştirilecek.':'',retryAt:providerNext[provider],at:Date.now(),...rateHeaders});await response.body?.cancel();if(provider==='OpenRouter'){openRouterModelIndex=(openRouterModelIndex+1)%models.length;modelAttempts++;}if(alternateConfigured&&Date.now()>=providerNext[alternate])provider=alternate;continue;}
       if(!response.ok){let providerDetail='';try{const errorBody=await response.text();const parsed=JSON.parse(errorBody);providerDetail=String(parsed?.error?.message||parsed?.message||'').slice(0,500);}catch{await response.body?.cancel();}onDebug({kind:'error',scope:'groq',provider,model,status:response.status,detail:providerDetail||'İstek reddedildi',at:Date.now()});if(provider==='OpenRouter'&&[400,404,422].includes(response.status)&&++modelAttempts<models.length){openRouterModelIndex=(openRouterModelIndex+1)%models.length;continue;}if(alternateConfigured&&Date.now()>=providerNext[alternate]){provider=alternate;continue;}throw Error(provider+' HTTP '+response.status+'; '+(providerDetail||'erişim/model ayarını kontrol edin.'));}
       const body=await response.json();
-      try{return {result:jsonResult(body.choices?.[0]?.message?.content),provider,model};}catch(error){onDebug({kind:'error',scope:'groq',provider,model,detail:error.message,at:Date.now()});if(provider==='OpenRouter'&&++modelAttempts<models.length){openRouterModelIndex=(openRouterModelIndex+1)%models.length;continue;}if(alternateConfigured&&Date.now()>=providerNext[alternate]){provider=alternate;continue;}throw error;}
+      try{return {result:jsonResult(body.choices?.[0]?.message?.content),provider,model,usage:body.usage||null};}catch(error){onDebug({kind:'error',scope:'groq',provider,model,detail:error.message,at:Date.now()});if(provider==='OpenRouter'&&++modelAttempts<models.length){openRouterModelIndex=(openRouterModelIndex+1)%models.length;continue;}if(alternateConfigured&&Date.now()>=providerNext[alternate]){provider=alternate;continue;}throw error;}
     }
   });queue=run;return run;
 }
@@ -283,7 +284,12 @@ let chatTransport=null;
 function useChatTransport(transport){chatTransport=transport;}
 function llmAvailable(){return chatTransport?chatTransport.available():!!process.env.GROQ_API_KEY||openRouterEnabled();}
 const llmMissing=()=>chatTransport?'Kuyrukta anahtarı yapılandırılmış bir LLM servisi yok; LLM servisini başlatın.':'Etkin bir GROQ_API_KEY veya OPENROUTER_API_KEY yapılandırılmamış.';
-const llmChat=(spec,signal,onWait,onDebug)=>chatTransport?chatTransport.chat(spec,signal,onWait,onDebug):chat(spec,signal,onWait,onDebug);
+// Every model call reports the tokens it used to the operation that is running (see lib/usage-context.cjs).
+const llmChat=async(spec,signal,onWait,onDebug)=>{
+  const out=await(chatTransport?chatTransport.chat(spec,signal,onWait,onDebug):chat(spec,signal,onWait,onDebug));
+  UsageContext.record({kind:'chat',provider:out.provider,model:out.model,...UsageContext.fromUsage(out.usage,{promptChars:String(spec.system||'').length+String(spec.user||'').length,completionChars:JSON.stringify(out.result??'').length})});
+  return out;
+};
 async function evaluateBatch(citation,text,signal,onWait,onDebug=()=>{}) {
   if(!llmAvailable()) throw Error(llmMissing());
   if(citation.sentence.length>5000) throw Error('Atıf cümlesi çok uzun; bağlam bölümünü düzenleyip tekrar deneyin.');

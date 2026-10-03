@@ -9,6 +9,12 @@ const Content=require('./word-content.cjs');
 const Store=require('./word-store.cjs');
 const Engine=require('./reference-engine.js');
 const {python}=require('./lib/python.cjs');
+const Identity=require('./lib/identity.cjs');
+// Accounts: every document belongs to its uploader, and content checks are recorded as operations with their tokens.
+let usage={run:(o,fn)=>fn(),event:()=>null,begin:()=>null},guard=null;
+function useUsage(u){usage={begin:()=>null,...u};}
+// guard(userId) throws a plan-limit error when the user's monthly token quota is used up.
+function useGuard(fn){guard=fn;}
 async function body(req){let size=0;const parts=[];for await(const chunk of req){size+=chunk.length;if(size>29*1024*1024)throw Error('Dosya en fazla 20 MB olabilir.');parts.push(chunk);}try{return JSON.parse(Buffer.concat(parts));}catch{throw Error('Geçersiz istek.');}}
 function decode(data){if(typeof data!=='string'||data.length>28*1024*1024||! /^[A-Za-z0-9+/]*={0,2}$/.test(data))throw Error('Geçersiz dosya verisi.');const buffer=Buffer.from(data,'base64');if(buffer.length>20*1024*1024)throw Error('Dosya en fazla 20 MB olabilir.');return buffer;}
 function spans(html,text){
@@ -112,7 +118,10 @@ function startVerification(s,port,after,scope){
   s.job={running:true,kind:'references',message:'Kaynaklar doğrulanıyor',completed:0,total:s.references.length};
   addDebugEvent(s,{scope:'reference',kind:'start',provider:'Kaynak doğrulama',detail:`${s.references.length} kayıt sıraya alındı`});
   // Runs in a worker thread, or as queue jobs answered by the verification service when a queue is configured.
+  const op=s.owner?usage.begin({userId:s.owner,kind:'word-verify',detail:{references:s.references.length,mode:s.mode}}):null;let opEnded=false;
+  const endOp=(status,error)=>{if(op&&!opEnded){opEnded=true;op.end(status,error);}};
   const worker=Verification.start({proxy:`http://127.0.0.1:${port}/api/proxy`,references:s.references.map(r=>r.raw),initialResults:s.references.map(r=>r.verification),googleBooksConfigured:!!process.env.GOOGLE_BOOKS_API_KEY},{queue:Backend.queue()});s.worker=worker;
+  const terminate=worker.terminate.bind(worker);worker.terminate=()=>{endOp('cancelled');return terminate();};
   const content=()=>{if(!after&&!s.autoContentScope)return;if(s.job.running){s.followupContent=true;return;}startContent(s,s.autoContentScope||scope).catch(e=>{s.job={running:false,message:e.message};persist(s);});};
   worker.on('message',m=>{
     if(s.worker!==worker)return;
@@ -135,12 +144,13 @@ function startVerification(s,port,after,scope){
       persist(s);if(runContent)content();
     }
     if(m.type==='done'||m.type==='error'){
+      endOp(m.type==='done'?'ok':'error',m.message);
       s.referenceJob={...s.referenceJob,running:false,pending:0,retryAt:null};s.worker=null;worker.terminate();
       if(!s.job.running||s.job.kind==='references')s.job={running:false,kind:'references',completed:m.type==='done'?s.references.length:s.referenceJob.completed,total:s.references.length,message:m.message||'Kaynak doğrulama tamamlandı'};
       persist(s);if(m.type==='done')content();
     }
   });
-  worker.on('error',()=>{if(s.worker!==worker)return;s.referenceJob.running=false;if(s.job.kind==='references')s.job={...s.job,running:false,message:'Kaynak işçisi başlatılamadı.'};s.worker=null;persist(s);});
+  worker.on('error',()=>{endOp('error','Kaynak işçisi başlatılamadı.');if(s.worker!==worker)return;s.referenceJob.running=false;if(s.job.kind==='references')s.job={...s.job,running:false,message:'Kaynak işçisi başlatılamadı.'};s.worker=null;persist(s);});
   worker.on('exit',()=>{if(s.worker===worker){s.referenceJob.running=false;if(s.job.kind==='references')s.job={...s.job,running:false,message:'Kaynak işçisi durdu; yeniden başlatabilirsiniz.'};s.worker=null;persist(s);}});
 }
 function scopedCitations(s,scope={}){
@@ -165,6 +175,7 @@ function fullText(ref,signal,options){
 async function startContent(s,scope={}){
   if(s.job.running)throw Error('Önce devam eden işlemi durdurun.');
   if(!llmConfigured())throw Error(Content.llmMissing());
+  if(s.owner&&guard)guard(s.owner);
   s.autoContentScope=scope;const controller=new AbortController();s.controller=controller;const signal=controller.signal;
   s.job={running:true,kind:'content',message:'Yayın metinleri ediniliyor',completed:0,total:scopedCitations(s,scope).length};
   addDebugEvent(s,{scope:'groq',kind:'start',provider:'Groq',detail:`${s.job.total} atıf sıraya alındı`});persist(s);
@@ -196,7 +207,7 @@ async function startContent(s,scope={}){
     }
     if(s.controller===controller){s.job.running=false;s.job.message='İçerik denetimi tamamlandı';s.controller=null;persist(s);if(s.followupContent){s.followupContent=false;startContent(s,scope).catch(()=>{});}}
   };
-  run().catch(()=>{if(s.controller===controller){s.job.running=false;s.job.message='İçerik denetimi durduruldu';s.controller=null;persist(s);}});
+  usage.run({userId:s.owner,kind:'content-check',detail:{citations:s.job.total,mode:s.mode}},run).catch(()=>{if(s.controller===controller){s.job.running=false;s.job.message='İçerik denetimi durduruldu';s.controller=null;persist(s);}});
 }
 function removeApplied(s,id){const group=s.appliedGroups.get(id);if(group)for(const patch of group)s.applied.delete(patch._key);s.appliedGroups.delete(id);}
 async function saveParagraph(s,input){
@@ -237,6 +248,7 @@ async function handle(req,res,url,json){
   if(!url.pathname.startsWith('/api/word'))return false;
   try{
     if(req.method!=='GET'&&req.headers['x-word-request']!=='1')return json(res,403,{error:'Yerel uygulama isteği gerekli.'}),true;
+    const user=Identity.isEnforced()?Identity.requireUser(req,res):null;
     if(url.pathname==='/api/word/upload'&&req.method==='POST'){
 
       const input=await body(req);const format=/\.pdf$/i.test(input.name||'')?'pdf':/\.docx$/i.test(input.name||'')?'docx':'';
@@ -244,12 +256,12 @@ async function handle(req,res,url,json){
       const data=decode(input.data);if(format==='pdf'&&!data.subarray(0,5).equals(Buffer.from('%PDF-')))throw Error('Geçerli PDF değil.');
       const result=await python({operation:format==='pdf'?'inspect_pdf':'inspect',data:data.toString('base64')});
       const extracted=Analysis.extractReferences(result.paragraphs);
-      const s={id:randomUUID(),name:path.basename(input.name).slice(0,150),format,mode:input.mode==='content'?'content':'word',createdAt:Date.now(),revision:0,originalData:data,pdfFiles:[],data,paragraphs:result.paragraphs,warnings:result.warnings,...extracted,touched:Date.now(),applied:new Map(),appliedGroups:new Map(),manualConfirmed:new Set(),manualMappings:new Map(),contextOverrides:new Map(),content:{},texts:{},debugEvents:[],job:{running:false,message:extracted.needsRange?'Kaynakça sınırlarını seçin.':'Belge alındı; atıf eşleştirmesi hazır.'}};
-      if(s.mode==='content'){s.checks={references:input.checks?.references!==false,citations:input.checks?.citations!==false,llm:input.checks?.llm!==false};s.checksStarted=false;}if(!extracted.needsRange)rebuild(s);sessions.set(s.id,s);persist(s);json(res,200,snapshot(s));return true;
+      const s={id:randomUUID(),owner:user?.userId||null,name:path.basename(input.name).slice(0,150),format,mode:input.mode==='content'?'content':'word',createdAt:Date.now(),revision:0,originalData:data,pdfFiles:[],data,paragraphs:result.paragraphs,warnings:result.warnings,...extracted,touched:Date.now(),applied:new Map(),appliedGroups:new Map(),manualConfirmed:new Set(),manualMappings:new Map(),contextOverrides:new Map(),content:{},texts:{},debugEvents:[],job:{running:false,message:extracted.needsRange?'Kaynakça sınırlarını seçin.':'Belge alındı; atıf eşleştirmesi hazır.'}};
+      if(s.mode==='content'){s.checks={references:input.checks?.references!==false,citations:input.checks?.citations!==false,llm:input.checks?.llm!==false};s.checksStarted=false;}if(!extracted.needsRange)rebuild(s);sessions.set(s.id,s);persist(s);usage.event({userId:s.owner,kind:'word-upload',detail:{format,bytes:data.length,mode:s.mode}});json(res,200,snapshot(s));return true;
     }
-    if(url.pathname==='/api/word/documents'&&req.method==='GET'){json(res,200,{documents:Store.list().map(d=>sessions.has(d.id)?{...d,job:sessions.get(d.id).job}:{...d,job:{...d.job,running:false}})});return true;}
+    if(url.pathname==='/api/word/documents'&&req.method==='GET'){json(res,200,{documents:Store.list().filter(d=>!user||d.owner===user.userId).map(d=>sessions.has(d.id)?{...d,job:sessions.get(d.id).job}:{...d,job:{...d.job,running:false}})});return true;}
     const match=url.pathname.match(/^\/api\/word\/([a-f0-9-]{36})(?:\/(\w+))?$/);if(!match)return json(res,404,{error:'İşlem bulunamadı.'}),true;
-    let s=sessions.get(match[1]);if(!s){s=Store.load(match[1]);if(s){rebuild(s);sessions.set(s.id,s);}}if(!s)return json(res,404,{error:'Belge oturumu sona erdi; yeniden yükleyin.'}),true;s.touched=Date.now();const action=match[2]||'state';
+    let s=sessions.get(match[1]);if(!s){s=Store.load(match[1]);if(s){rebuild(s);sessions.set(s.id,s);}}if(!s||(user&&s.owner!==user.userId))return json(res,404,{error:'Belge oturumu sona erdi; yeniden yükleyin.'}),true;s.touched=Date.now();const action=match[2]||'state';
     if(req.method==='GET'&&action==='state'){const body=JSON.stringify(snapshot(s)),tag='"'+createHash('sha1').update(body).digest('base64url')+'"';
       if(req.headers['if-none-match']===tag){res.writeHead(304,{ETag:tag,'Cache-Control':'no-cache'});res.end();return true;}
       res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-cache','X-Content-Type-Options':'nosniff',ETag:tag});res.end(body);return true;}
@@ -359,6 +371,12 @@ async function handle(req,res,url,json){
     }
     else throw Error('İşlem bulunamadı.');
     persist(s);json(res,200,snapshot(s));return true;
-  }catch(e){json(res,400,{error:e.message||'Word işlemi tamamlanamadı.'});return true;}
+  }catch(e){json(res,e.status||400,{error:e.message||'Word işlemi tamamlanamadı.',...(e.code?{code:e.code}:{}),...(e.upgrade?{upgrade:e.upgrade}:{})});return true;}
 }
-module.exports={handle,startVerification,python,spans,applyGroup,rebuild,decode,sessions,dispose,scopedCitations,scopeNeedsVerification};
+// Admin deleting an account: all documents of the user go too.
+function removeUserDocuments(userId){
+  let removed=0;
+  for(const d of Store.list())if(d.owner===userId){const s=sessions.get(d.id);if(s){s.deleted=true;dispose(s);}Store.remove(d.id);removed++;}
+  return removed;
+}
+module.exports={useUsage,useGuard,removeUserDocuments,purgeLegacy:()=>Store.purgeUnowned(),handle,startVerification,python,spans,applyGroup,rebuild,decode,sessions,dispose,scopedCitations,scopeNeedsVerification};

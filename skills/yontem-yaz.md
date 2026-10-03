@@ -2,7 +2,7 @@
 name: yontem-yaz
 title: Yöntem bölümü yaz
 description: Kaynaklardaki yöntemleri esas alarak yöntem bölümü taslağı hazırlar.
-plans: [basic, premium, gold]
+minPlan: basic
 keywords: [yöntem, method, metodoloji, örneklem, veri toplama, analiz, katılımcı]
 needsSources: true
 ---
