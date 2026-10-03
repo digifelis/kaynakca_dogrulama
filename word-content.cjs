@@ -255,6 +255,24 @@ function requestErrorDetail(error,timeoutMs){
   return `${error?.name||'Error'}: ${error?.message||'bağlantı hatası'}`;
 }
 function jsonResult(value){const text=String(value||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');try{return JSON.parse(text);}catch{const first=text.indexOf('{'),last=text.lastIndexOf('}');if(first>=0&&last>first)return JSON.parse(text.slice(first,last+1));throw Error('Model okunabilir JSON sağlamadı.');}}
+// Groq rejects output that does not fit the schema (cut off, bad escapes) but returns it as failed_generation; the text is often still usable.
+function salvageJson(text,schema){
+  const value=String(text||'').trim();if(!value)return null;
+  try{return jsonResult(value);}catch{/* fall through to the answer-field repair */}
+  if(!schema?.properties?.answer)return null;
+  // Cut-off output: read the answer string by hand up to the last complete character.
+  const key=value.indexOf('"answer"');if(key<0)return null;
+  const open=value.indexOf('"',value.indexOf(':',key)+1);if(open<0)return null;
+  const BS=String.fromCharCode(92),NL=String.fromCharCode(10),raw=[];
+  for(let i=open+1;i<value.length;i++){
+    const c=value[i];
+    if(c===BS){const n=value[i+1];if(n===undefined)break;raw.push(c,n);i++;continue;}
+    if(c==='"')break;
+    raw.push(c===NL?BS+'n':c);
+  }
+  let answer;try{answer=JSON.parse('"'+raw.join('')+'"');}catch{return null;}
+  return answer.trim()?{answer,insufficient:/"insufficient": ?true/.test(value)}:null;
+}
 // Serialized LLM request with provider routing, quota waits and model failover; returns parsed JSON.
 async function chat({name,schema,system,user,maxTokens=2500,maxWaitMs,model:modelOverride},signal,onWait,onDebug=()=>{}) {
   const run=queue.catch(()=>{}).then(async()=>{
@@ -292,7 +310,7 @@ async function chat({name,schema,system,user,maxTokens=2500,maxWaitMs,model:mode
       if(response.status===429||response.status>=500){const headerDelay=quotaDelay(response),fallback=provider==='OpenRouter'?3000:60000;const delay=Math.max(1000,Number.isFinite(headerDelay)?headerDelay:Math.min(900000,fallback*2**Math.min(attempts++,4)));keyPool().report(key.id,{status:response.status,retryAfterMs:delay,gapMs:gapMs(provider)});onDebug({kind:'wait',scope:'groq',provider,model,status:response.status,key:key.label,detail:provider==='OpenRouter'?'OpenRouter tüm model alternatiflerinden yanıt alamadı. Model sırası değiştirilecek.':'',retryAt:Date.now()+delay,at:Date.now(),...rateHeaders});await response.body?.cancel();if(provider==='OpenRouter'){openRouterModelIndex=(openRouterModelIndex+1)%models.length;modelAttempts++;}if(Date.now()<providerReadyAt(provider)&&alternateConfigured&&Date.now()>=providerReadyAt(alternate))provider=alternate;continue;}
       // A refused key (401/403) is marked invalid in the pool; the request goes on with the next key or provider.
       if(response.status===401||response.status===403){keyPool().report(key.id,{status:response.status,error:'HTTP '+response.status});onDebug({kind:'error',scope:'groq',provider,model,status:response.status,key:key.label,detail:'Anahtar sağlayıcı tarafından reddedildi.',at:Date.now()});await response.body?.cancel();if(!providerConfigured(provider)&&!alternateConfigured)throw Error(provider+' HTTP '+response.status+'; anahtar sağlayıcı tarafından reddedildi, Yönetim → API anahtarları sayfasından kontrol edin.');continue;}
-      if(!response.ok){let providerDetail='',errorCode='';try{const errorBody=await response.text();const parsed=JSON.parse(errorBody);errorCode=String(parsed?.error?.code||'');providerDetail=String(parsed?.error?.message||parsed?.message||'').slice(0,500);}catch{await response.body?.cancel();}keyPool().report(key.id,{status:response.status,error:providerDetail,retryAfterMs:1000,gapMs:gapMs(provider)});onDebug({kind:'error',scope:'groq',provider,model,status:response.status,detail:providerDetail||'İstek reddedildi',at:Date.now()});if(provider==='Groq'&&response.status===400&&(errorCode==='json_validate_failed'||/Failed to validate JSON/i.test(providerDetail))&&++jsonFails<=2)continue;if(provider==='OpenRouter'&&[400,404,422].includes(response.status)&&++modelAttempts<models.length){openRouterModelIndex=(openRouterModelIndex+1)%models.length;continue;}if(alternateConfigured&&Date.now()>=providerReadyAt(alternate)){provider=alternate;continue;}throw Error(provider+' HTTP '+response.status+'; '+(providerDetail||'erişim/model ayarını kontrol edin.'));}
+      if(!response.ok){let providerDetail='',errorCode='',failedGeneration='';try{const errorBody=await response.text();const parsed=JSON.parse(errorBody);errorCode=String(parsed?.error?.code||'');failedGeneration=String(parsed?.error?.failed_generation||'');providerDetail=String(parsed?.error?.message||parsed?.message||'').slice(0,500);}catch{await response.body?.cancel();}keyPool().report(key.id,{status:response.status,error:providerDetail,retryAfterMs:1000,gapMs:gapMs(provider)});onDebug({kind:'error',scope:'groq',provider,model,status:response.status,detail:providerDetail||'İstek reddedildi',at:Date.now()});if(provider==='Groq'&&response.status===400&&(errorCode==='json_validate_failed'||/Failed to (?:validate|generate) JSON/i.test(providerDetail))){const salvaged=salvageJson(failedGeneration,schema);if(salvaged){onDebug({kind:'error',scope:'groq',provider,model,detail:'Şemaya uymayan çıktıdan JSON kurtarıldı.',at:Date.now()});return {result:salvaged,provider,model,usage:null,keyLabel:key.label};}if(++jsonFails<=2)continue;}if(provider==='OpenRouter'&&[400,404,422].includes(response.status)&&++modelAttempts<models.length){openRouterModelIndex=(openRouterModelIndex+1)%models.length;continue;}if(alternateConfigured&&Date.now()>=providerReadyAt(alternate)){provider=alternate;continue;}throw Error(provider+' HTTP '+response.status+'; '+(providerDetail||'erişim/model ayarını kontrol edin.'));}
       const body=await response.json();
       keyPool().report(key.id,{ok:true,tokens:{prompt:body.usage?.prompt_tokens,completion:body.usage?.completion_tokens},gapMs:gapMs(provider,body.usage?.total_tokens||(body.usage?.prompt_tokens||0)+(body.usage?.completion_tokens||0)||Math.ceil((system.length+user.length)/3)+maxTokens)});
       try{return {result:jsonResult(body.choices?.[0]?.message?.content),provider,model,usage:body.usage||null,keyLabel:key.label};}catch(error){onDebug({kind:'error',scope:'groq',provider,model,detail:error.message,at:Date.now()});if(provider==='OpenRouter'&&++modelAttempts<models.length){openRouterModelIndex=(openRouterModelIndex+1)%models.length;continue;}if(alternateConfigured&&Date.now()>=providerReadyAt(alternate)){provider=alternate;continue;}throw error;}
