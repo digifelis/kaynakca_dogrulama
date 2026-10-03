@@ -472,6 +472,14 @@ docker network inspect mansur_laravel_net >/dev/null 2>&1 || docker network crea
 ```
 Bu ağdaki başka container'lar (örn. Laravel projesinin Nginx'i) servislere şu adlarla ulaşır: web → `http://kaldera-web:4173`, kuyruk → `http://kaldera-queue:4180`. Ters vekil bu ağdaki bir container ise Bölüm 10.7'deki `proxy_pass http://127.0.0.1:4173;` yerine `proxy_pass http://kaldera-web:4173;` (kuyruk için `http://kaldera-queue:4180`) yazın. Ters vekil sunucuda doğrudan (container değil) çalışıyorsa `127.0.0.1` adresleri aynen kalır. Bu ağa bağlanan başka uygulamalarla ad çakışmaması için `kaldera-` ön ekli takma adlar kullanılmıştır. `docker run` ile elle başlatılan container'lara da `--network mansur_laravel_net` ekleyin.
 
+**Ters vekil sunucunun IP'si üzerinden bağlanıyorsa** (örn. `proxy_pass http://10.1.2.116:4173;`): web portu varsayılan olarak yalnız `127.0.0.1`'de yayınlanır, bu yüzden o adrese bağlanan Nginx "Connection refused" / 502 alır. Compose dosyasının yanındaki `.env` dosyasına sunucu IP'sini yazın ve yeniden başlatın:
+```bash
+echo 'WEB_BIND=10.1.2.116' >> .env       # kuyruk için de gerekirse: QUEUE_BIND=10.1.2.116
+docker compose up -d
+docker port kaynakca-masasi-web-1         # 4173/tcp -> 10.1.2.116:4173
+```
+Port o ağdan erişilebilir olur; güvenlik duvarında yalnızca ters vekile izin verin. `0.0.0.0` yazmaktan kaçının. Ad yerine IP kullanmak, container yeniden oluşunca Nginx'in eski IP'de kalması sorununu da önler.
+
 ### 10.6 Container'ları derleyin ve başlatın
 
 ```bash
@@ -630,6 +638,16 @@ docker compose up -d            # yalnızca değişen container'lar yeniden olu�
 docker compose ps
 ```
 Birimler korunur; hesaplar ve ayarlar kaybolmaz. Güncellemeden önce `sudo kaldera-yedek` çalıştırın. Geri dönmek için `git checkout <önceki-commit>` ve yeniden `docker compose build && docker compose up -d`.
+
+Güncellemeden sonra yeni oluşan container'ların Nginx ile aynı ağda (`mansur_laravel_net`, Bölüm 10.5-e) olduğunu doğrulayın:
+```bash
+docker network inspect mansur_laravel_net --format '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}'
+```
+Çıktıda Nginx ile birlikte `kaynakca-masasi-web-1` ve `kaynakca-masasi-queue-1` görünmelidir. Görünmüyorsa (örn. sunucudaki `docker-compose.yml` ağ tanımını içermiyorsa) elle bağlayın; bu bağlantı container yeniden oluşturulunca kaybolur, kalıcı çözüm `docker-compose.yml` içinde `laravel` ağının ve takma adların bulunmasıdır:
+```bash
+docker network connect --alias kaldera-web   mansur_laravel_net kaynakca-masasi-web-1
+docker network connect --alias kaldera-queue mansur_laravel_net kaynakca-masasi-queue-1
+```
 
 ### 10.11 İzleme ve günlük komutları
 

@@ -30,8 +30,8 @@ services:
     networks:
       default: {}
       laravel: { aliases: [kaldera-queue] }
-    # Published on localhost only; open it to other hosts (behind TLS) when services run elsewhere.
-    ports: ["127.0.0.1:4180:4180"]
+    # Published on localhost only (QUEUE_BIND in .env changes the address); open it to other hosts (behind TLS) when services run elsewhere.
+    ports: ["${QUEUE_BIND:-127.0.0.1}:4180:4180"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4180/health"]
       interval: 10s
@@ -87,7 +87,7 @@ services:
     networks:
       default: {}
       laravel: { aliases: [kaldera-web] }
-    ports: ["127.0.0.1:4173:4173"]
+    ports: ["${WEB_BIND:-127.0.0.1}:4173:4173"]
     depends_on: { queue: { condition: service_healthy } }
 
 networks:
