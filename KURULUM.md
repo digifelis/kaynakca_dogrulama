@@ -464,6 +464,14 @@ nano services/verify/.env     # CROSSREF_MAILTO=<kurum e-postası> yazmanız ön
 
 **d) İlk yönetici hesabı (isteğe bağlı):** Varsayılan ilk hesap `admin@admin.com` / `admin`'dir ve ilk girişte parola değişimi zorunludur. Kendi hesabınızla başlamak isterseniz `docker-compose.yml`'de `web` servisinin `environment` bölümüne `ADMIN_USERNAME` ve `ADMIN_PASSWORD` (10+ karakter) ekleyin.
 
+### 10.5-e Docker ağı: `mansur_laravel_net`
+
+Tüm container'lar (queue, verify, llm, web) Compose'un kendi ağına ek olarak sunucudaki mevcut **`mansur_laravel_net`** ağına da bağlanır (`docker-compose.yml` → `networks`; ağ `external` olduğu için Compose onu oluşturmaz, var olmalıdır):
+```bash
+docker network inspect mansur_laravel_net >/dev/null 2>&1 || docker network create mansur_laravel_net
+```
+Bu ağdaki başka container'lar (örn. Laravel projesinin Nginx'i) servislere şu adlarla ulaşır: web → `http://kaldera-web:4173`, kuyruk → `http://kaldera-queue:4180`. Ters vekil bu ağdaki bir container ise Bölüm 10.7'deki `proxy_pass http://127.0.0.1:4173;` yerine `proxy_pass http://kaldera-web:4173;` (kuyruk için `http://kaldera-queue:4180`) yazın. Ters vekil sunucuda doğrudan (container değil) çalışıyorsa `127.0.0.1` adresleri aynen kalır. Bu ağa bağlanan başka uygulamalarla ad çakışmaması için `kaldera-` ön ekli takma adlar kullanılmıştır. `docker run` ile elle başlatılan container'lara da `--network mansur_laravel_net` ekleyin.
+
 ### 10.6 Container'ları derleyin ve başlatın
 
 ```bash
