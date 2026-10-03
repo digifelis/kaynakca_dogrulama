@@ -49,8 +49,6 @@
       S.boot = await api('GET', '/bootstrap');
       S.collections = S.boot.collections || [];
       renderPlan(); renderSkills(); renderProjectList(); renderCollectionList();
-      $('consent').checked = memory.get('wr-consent') === '1';
-      $('upload').disabled = !$('consent').checked;
       const remembered = memory.get('wr-collection');
       S.collectionId = S.collections.some(item => item.id === remembered) ? remembered : S.collections[0]?.id || null;
       let id = memory.get('wr-project');
@@ -392,10 +390,9 @@
     syncSearchButtons();
   }
   function syncSearchButtons() {
-    const consent = $('consent').checked, picked = Q.picked.size;
-    $('search-import').disabled = !consent || !picked || Q.busy; $('search-import').textContent = picked ? `Seçilenleri koleksiyona ekle (${picked})` : 'Seçilenleri koleksiyona ekle';
-    $('search-import').title = consent ? '' : 'Önce yukarıdaki onay kutusunu işaretleyin.';
-    for (const button of $('search-results').querySelectorAll('button[data-add]')) { button.disabled = !consent || Q.busy; button.title = consent ? '' : 'Önce yukarıdaki onay kutusunu işaretleyin.'; }
+    const picked = Q.picked.size;
+    $('search-import').disabled = !picked || Q.busy; $('search-import').textContent = picked ? `Seçilenleri koleksiyona ekle (${picked})` : 'Seçilenleri koleksiyona ekle';
+    for (const button of $('search-results').querySelectorAll('button[data-add]')) button.disabled = Q.busy;
   }
   function resetSearch() { Q.next = null; Q.papers = []; Q.picked.clear(); Q.added.clear(); $('search-results').innerHTML = ''; $('search-note').textContent = ''; $('search-actions').hidden = true; $('search-more').hidden = true; }
   async function runSearch(more) {
@@ -412,7 +409,6 @@
     } catch (error) { $('search-note').textContent = error.message; }
   }
   async function importPapers(ids) {
-    if (!$('consent').checked) { say('Önce kaynak metinlerinin dış servislere gönderilmesini kabul edin.', 'error'); return; }
     Q.busy = true; syncSearchButtons();
     try {
       const skipped = []; let added = 0;
@@ -443,8 +439,6 @@
     renderSearch();
   });
   $('search-import').addEventListener('click', () => importPapers([...Q.picked]));
-  $('consent').addEventListener('change', syncSearchButtons);
-  $('consent').addEventListener('change', event => { memory.set('wr-consent', event.target.checked ? '1' : '0'); $('upload').disabled = !event.target.checked; });
   const toBase64 = file => new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] || ''); reader.onerror = () => reject(Error('Dosya okunamadı.')); reader.readAsDataURL(file); });
   $('upload').addEventListener('change', async event => {
     const files = [...event.target.files]; event.target.value = '';

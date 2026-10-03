@@ -1,19 +1,42 @@
 const Engine = require('./reference-engine.js');
 const norm = Engine.normalizeTitle;
-const YEAR = '(?:(?:18|19|20)\\d{2}[a-z]?|t\\.\\s*y\\.|n\\.\\s*d\\.)';
+const YEAR = '(?:(?:18|19|20)\\d{2}[a-z]?|t\\.\\s*y\\.(?:-\\d+)?|n\\.\\s*d\\.(?:-\\d+)?)';
 const yearPattern = new RegExp(YEAR, 'gi');
 const years = text => Array.from(text.matchAll(new RegExp(YEAR, 'gi')));
-const yearKey = value => value.toLowerCase().replace(/\s/g, '').replace(/^t\.y\.$/, 'n.d.');
-const cleanName = value => String(value).replace(/['’]s\b/gi, '').replace(/\bet\s+al\.?|\bvd\.|\bve\s+ark\.?|\bve\s+diğerleri/gi, '').replace(/[,\.\s]+$/, '').trim();
+const yearKey = value => value.toLowerCase().replace(/\s/g, '').replace(/^t\.y\.(-\d+)?$/, 'n.d.$1');
+// An undated citation ("t.y.") also fits a numbered undated record ("t.y.-1").
+const yearFits = (cited, listed) => cited === listed || (cited === 'n.d.' && /^n\.d\.-\d+$/.test(listed));
+const cleanName = value => String(value).replace(/\s*\[[^\]]*\]/g, '').replace(/['’]s\b/gi, '').replace(/\bet\s+al\.?|\bvd\b\.?|\bve\s+ark\.?|\bve\s+diğerleri/gi, '').replace(/[,\.\s]+$/, '').trim();
 const nameKey = value => norm(cleanName(value));
 const heading = p => /^(?:heading|ba[şs]?l[iı]?k|balk)\s*\d*/i.test(p.style||'') || /^(?:introduction|discussion|conclusion|conclusions|abstract|giriş|sonuç|tartışma)$/i.test(p.text.trim());
+// Sentence openers that start with a capital but are not part of an author name.
+const OPENER = /^(?:Nitekim|Ayrıca|Ancak|Fakat|Ama|Üstelik|Hatta|Keza|Yine|Dolayısıyla|Örneğin|Bununla|Bunun|Buna|Çünkü|Oysa|Similarly|However|Moreover|Furthermore|Additionally|Also|Thus|Therefore|Indeed|Notably)\s+/u;
 const escaped = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-function aliases(r) {
+// Names under which one body is cited; keys are in nameKey form.
+const BODY_NAMES = [
+  ['world health organization','dunya saglik orgutu','dso','who'],
+  ['inter agency standing committee','iasc'],
+  ['world federation for mental health','dunya ruh sagligi federasyonu','wfmh']
+];
+const abbreviationOf =author => author.match(/\(([\p{Lu}\d-]{2,})\)/u)?.[1];
+const bareAuthor = author => author.replace(/\s*\([^)]*\)/g,'').trim();
+function aliases(r, all = []) {
   const values=[r.author];
-  const abbreviation=r.author.match(/\(([\p{Lu}\d-]{2,})\)/u)?.[1];
-  if(abbreviation) values.push(abbreviation,r.author.replace(/\s*\([^)]*\)/g,''));
+  const abbreviation=abbreviationOf(r.author);
+  if(abbreviation) values.push(abbreviation,bareAuthor(r.author));
+  else {
+    // An abbreviation declared on another record of the same institution
+    // ("... Başkanlığı (AFAD)") also names this record.
+    const own=nameKey(r.author);
+    for(const other of all){const short=abbreviationOf(other.author);if(short&&nameKey(bareAuthor(other.author))===own)values.push(short);}
+  }
   // Explicitly identifiable suffix, not a general institution/publisher equivalence.
   if(/\s+AI$/i.test(r.author))values.push(r.author.replace(/\s+AI$/i,''));
+  // Official-body prefix and the bilingual names of international bodies.
+  const plain=r.author.replace(/^T\.\s*C\.\s+/i,'');
+  if(plain!==r.author)values.push(plain);
+  const own=nameKey(bareAuthor(plain));
+  for(const group of BODY_NAMES)if(group.some(n=>own===n||own.startsWith(n+' ')))values.push(...group);
   return values;
 }
 function publicationKeys(raw) {
@@ -23,15 +46,30 @@ function publicationKeys(raw) {
   for(const m of raw.matchAll(/https?:\/\/[^\s<>]+/g))try{const u=new URL(m[0].replace(/[.,;)]*$/,''));if(u.pathname.replace(/\/$/,'')&&!/doi\.org$|arxiv\.org$/i.test(u.hostname))keys.push('url:'+u.hostname.toLowerCase().replace(/^www\./,'')+u.pathname.replace(/\/$/,''));}catch{}
   return keys;
 }
+// "Alghamdi A. A.", "Bahadır Yılmaz E.", "Boscarino J, Adams R, Figley C.",
+// "Drayer CS, ... Glass AJ.Title": surname first, initials without a comma.
+const INITIALS_FIRST = /^([\p{Lu}][\p{L}'’-]*(?:\s+[\p{L}'’-]+)*?)\s+(?:\p{Lu}{1,4}\.?|(?:\p{Lu}\.?\s?){1,3})(?=\s*\p{Lu}\p{Ll}|\s*$)/u;
+function initialsFirstAuthors(prefix) {
+  const parts = prefix.split(/,\s*/);
+  // "Surname, G. & Surname, B." has initials after the comma: not this style.
+  if (parts.length > 1 && /^\p{Lu}\.?(?:\s|&|$)/u.test(parts[1])) return null;
+  const names = [];
+  for (const part of parts) {
+    const m = part.trim().replace(/^(?:and|ve|&)\s+/i, '').match(INITIALS_FIRST);
+    if (!m) break;
+    names.push(m[1].trim());
+  }
+  return names.length ? names : null;
+}
 function referenceIdentity(raw) {
   // Prefer the publication date in parentheses; initials such as Bui, N. D. Q.
   // must not be mistaken for the undated marker n.d.
   const date = new RegExp('\\(\\s*('+YEAR+')(?=\\s*[,)])','i').exec(raw);
   const y = date ? Object.assign([date[1]], {index:date.index+date[0].indexOf(date[1])}) : years(raw).find(value=>/^\d/.test(value[0]));
-  const prefix = raw.slice(0, y?.index ?? raw.length).replace(/\(\s*$/, '').trim();
+  const prefix = raw.slice(0, y?.index ?? raw.length).replace(/\(\s*$/, '').replace(/[‐-―−]/g, '-').trim();
   // Initials may be spaced ("D. J."), glued ("SY.") or without periods ("DJ"); a
   // list connector ("and", "ve", "&") belongs to the separator, not the surname.
-  const authors = Array.from(prefix.matchAll(/(?:^|[,;&]\s*|\b(?:and|ve)\s+)([\p{L}][\p{L}'’\s-]*?),\s*[\p{Lu}](?:\.|[\p{Lu}]+\.?|(?=\s*[,;&(]|$))/gu)).map(m => m[1].trim().replace(/^(?:and|ve|&)\s+/i, ''));
+  const authors = initialsFirstAuthors(prefix) || Array.from(prefix.matchAll(/(?:^|[,;&]\s*|\b(?:and|ve)\s+)([\p{L}][\p{L}'’\s-]*?),\s*[\p{Lu}](?:\.|[\p{Lu}]+\.?|(?=\s*[,;&(]|$))/gu)).map(m => m[1].trim().replace(/^(?:and|ve|&)\s+/i, ''));
   if (!authors.length) authors.push(prefix.replace(/[,.(\s]+$/, ''));
   return { authors, author: authors[0], year: y ? yearKey(y[0]) : '', title: Engine.parseReference(raw).title };
 }
@@ -69,16 +107,16 @@ function citationAuthors(value) {
   return cleanName(value).split(/\s*(?:,|&|\bve\b|\band\b)\s*/).map(v => nameKey(v)).filter(Boolean);
 }
 function narrativeAuthor(before,references) {
-  const names=[...new Set(references.flatMap(r=>[...r.authors,...aliases(r)]))].sort((a,b)=>b.length-a.length);
+  const names=[...new Set(references.flatMap(r=>[...r.authors,...aliases(r,references)]))].sort((a,b)=>b.length-a.length);
   const proper="(?<![\\p{L}])(?:(?:de|van|von|der|den)\\s+)*[\\p{Lu}][\\p{L}'’–-]*(?:\\s+[\\p{Lu}][\\p{L}'’–-]*)*";
-  const ending="(?:\\s+(?:et\\s+al\\.?|vd\\.|ve\\s+ark\\.?|ve\\s+diğerleri))?(?:['’]s)?";
+  const ending="(?:\\s+(?:et\\s+al\\.?|vd\\.?|ve\\s+ark\\.?|ve\\s+diğerleri))?(?:['’]s)?";
   const known=names.map(n=>before.match(new RegExp('(?<![\\p{L}])'+escaped(n)+ending+'$','iu'))).find(Boolean);
   const fallback=before.match(new RegExp(proper+ending+'$','u'));
   let value=(known||fallback)?.[0]||'';
   // Walk the complete comma/conjunction list, retaining its first author and offsets.
   while(value){const parsed=citationAuthors(value);if(references.some(r=>r.authors.length>1&&r.authors.length===parsed.length&&r.authors.every((a,i)=>nameKey(a)===parsed[i])))break;
     const prefix=before.slice(0,before.length-value.length);const connector=prefix.match(/(?:,\s*(?:(?:and|ve|&)\s*)?|\s+(?:and|ve|&)\s*)$/);if(!connector)break;
-    const left=prefix.slice(0,connector.index);const prior=left.match(new RegExp(proper+'$','u'));if(!prior)break;
+    const left=prefix.slice(0,connector.index);const prior=left.match(new RegExp(proper+'$','u'));if(!prior)break;prior[0]=prior[0].replace(OPENER,'');if(!prior[0])break;
     // When the name already belongs to a listed reference, extend the list only
     // with a name that is itself a reference author or keeps it a run of that
     // reference's authors: a sentence opener ("Similarly, Madusanka (2016)") is not a co-author;
@@ -88,15 +126,16 @@ function narrativeAuthor(before,references) {
     if(known&&!/(?:and|ve|&)\s*$/i.test(connector[0])&&!references.some(r=>r.authors.some(a=>nameKey(a)===extended[0]))&&!references.some(r=>{const keys=r.authors.map(nameKey);return keys.some((_,i)=>extended.every((a,j)=>keys[i+j]===a));}))break;
     value=prior[0]+connector[0]+value;
   }
-  return value.replace(/^The\s+/,'');
+  return value.replace(/^The\s+/,'').replace(OPENER,'');
 }
 function citationsIn(p, references) {
   const citations = [];
   for (const par of p.text.matchAll(/\(([^()]*)\)/g)) {
-    if (/kişisel iletişim|personal communication/i.test(par[1]) || /\b\d{4}\s*[-–—]\s*\d{4}\b/.test(par[1])) continue;
+    if (/kişisel iletişim|personal communication/i.test(par[1]) || /\b\d{4}\s*[-–—]\s*\d{4}\b/.test(par[1].replace(/:\s*\d+(?:\s*[-–]\s*\d+)?/g,''))) continue;
     let segOffset = par.index + 1;
     for (const segment of par[1].split(';')) {
-      const ys = years(segment); if (!ys.length) { segOffset += segment.length+1; continue; }
+      // A page number after the year ("2000: 1", "1977: 1982-1990") is not a year.
+      const ys = years(segment).filter(y=>y.index===0 || !/(?::\s*|\d\s*[-–]\s*)$/.test(segment.slice(0,y.index))); if (!ys.length) { segOffset += segment.length+1; continue; }
       let authorText = segment.slice(0, ys[0].index).replace(/[,\s]+$/, '').trim();
       let narrative = false; let authorStart = segOffset + segment.indexOf(authorText);
       if (!authorText) {
@@ -106,7 +145,7 @@ function citationsIn(p, references) {
         authorStart = before.length-authorText.length;
       }
       // Parenthetical prose/target years and units are not author–year citations.
-      const tail=segment.slice(ys[0].index).replace(new RegExp(YEAR,'gi'),'').replace(/[,\s]|(?:s\.|pp?\.)\s*\d+(?:[-–]\d+)?/gi,'');
+      const tail=segment.slice(ys[0].index).replace(/:\s*\d+(?:\s*[-–]\s*\d+)?/g,'').replace(new RegExp(YEAR,'gi'),'').replace(/[,\s]|(?:s\.|pp?\.)\s*\d+(?:[-–]\d+)?/gi,'');
       if(tail || (!narrative && (!/,\s*$/.test(segment.slice(0,ys[0].index)) || !/^(?:(?:de|van|von)\s+)?\p{Lu}/u.test(authorText)))){segOffset+=segment.length+1;continue;}
       if (!authorText || /\d/.test(authorText) || authorText.length > 110) { segOffset += segment.length+1; continue; }
       for (const y of ys) {
@@ -119,6 +158,11 @@ function citationsIn(p, references) {
     }
   }
   return citations;
+}
+// Turkish case/possessive suffix on a cited name: "Başkanlığına" for "Başkanlığı".
+const SUFFIX = /^(?:y?[ae]|n[ae]|[iu]|in|un|nin|nun|d[ae]n?|t[ae]n?|nd[ae]n?|yla|yle|la|le|si|su|ni|nu|yi|yu)$/;
+function suffixed(key, name) {
+  return name.length>=4 && key.length>name.length && key.startsWith(name) && SUFFIX.test(key.slice(name.length));
 }
 function distance(a,b) {
   const rows = Array.from({length:a.length+1},(_,i)=>[i]);
@@ -137,8 +181,13 @@ function analyze(paragraphs, references, range) {
       c.sentence = ss[sentence]?.text || p.text;
       c.context = [...preceding, ...ss.slice(0,sentence+1).map(s=>s.text)].slice(-4);
       c.location = `${p.part === 'word/document.xml' ? 'Ana metin' : p.part.includes('footnotes') ? 'Dipnot' : 'Sonnot'} · paragraf ${p.index+1}`;
-      const byAuthor = references.filter(r => aliases(r).some(a=>nameKey(a)===c.authors[0]));
-      const exact = byAuthor.filter(r => r.year===c.year);
+      // An institution name may itself contain "ve"/"and" ("Afet ve Acil Durum Yönetimi
+      // Başkanlığı"): when the whole text names a record, it is one author, not a list.
+      const whole = nameKey(c.authorText);
+      if (c.authors.length>1 && references.some(r=>aliases(r,references).some(a=>nameKey(a)===whole||suffixed(whole,nameKey(a))))) c.authors=[whole];
+      let byAuthor = references.filter(r => aliases(r,references).some(a=>nameKey(a)===c.authors[0]));
+      if(!byAuthor.length && c.authors.length===1) byAuthor = references.filter(r => aliases(r,references).some(a=>suffixed(c.authors[0],nameKey(a))));
+      const exact = byAuthor.filter(r => yearFits(c.year, r.year));
       let ref;
       if(exact.length===1) ref=exact[0];
       else if(exact.length>1) {c.issue='Belirsiz eşleşme: aynı yazar ve yıl için birden fazla kayıt.';exact.forEach(r=>matched.add(r.id));c.candidates=exact.map(r=>r.id);}
@@ -157,7 +206,7 @@ function analyze(paragraphs, references, range) {
       }
       if(ref) {
         c.reference=ref.id; matched.add(ref.id);
-        const abbreviated=/\bet\s+al\b|\bvd\.|\bve\s+ark\.?|\bve\s+diğerleri/i.test(c.authorText);
+        const abbreviated=/\bet\s+al\b|\bvd\b|\bve\s+ark\.?|\bve\s+diğerleri/i.test(c.authorText);
         const groupMismatch=c.authors.length>1&&c.authors.some((a,i)=>a!==norm(ref.authors[i]||'')) || c.authors.length===1&&ref.authors.length>1&&!abbreviated;
         if(groupMismatch && !c.issue) {
           c.issue='Yazar grubu uyuşmazlığı; eşleşmeyi kontrol edin.';

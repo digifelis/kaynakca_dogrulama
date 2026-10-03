@@ -171,6 +171,11 @@ def join_lines(text, line):
         return text + line
     return text + ' ' + line
 
+def open_paren(text):
+    # A citation or abbreviation cut by a page or column break: "(Brymer vd., 2006: 6; Everly & Flynn, 2006:" + "95; ...)".
+    i = text.rfind('(')
+    return i >= 0 and text.find(')', i) < 0 and len(text) - i < 240
+
 def pdf_lines(reader):
     """Visual lines in reading order as (page, indent, text); layout mode keeps word spacing and indentation."""
     import unicodedata
@@ -245,7 +250,7 @@ def pdf_paragraphs(data):
             # Vertical gaps end a block unless the text stops mid-sentence (page or column flow).
             if in_refs: done = not hanging.get(section) and bool(ENTRY_YEAR.search(current))
             else: done = bool(re.search(r'[.!?:"”)\]]$', previous)) or bool(previous and len(previous) < full * 0.72 and not re.search(r'[,;]$', previous))
-            if done: emit(); previous = ''
+            if done and not (not in_refs and open_paren(current)): emit(); previous = ''
             continue
         short_prev = bool(previous) and len(previous) < full * 0.72
         if REF_HEADING.match(line):
@@ -260,7 +265,7 @@ def pdf_paragraphs(data):
         elif current:
             ends = re.search(r'[.!?:;"”’)\]]$', previous)
             indented = indent > base + 2 and len(line) > 25
-            if short_prev and (ends or not re.search(r'[,;]$', previous)) or ends and indented: emit()
+            if (short_prev and (ends or not re.search(r'[,;]$', previous)) or ends and indented) and not open_paren(current): emit()
         if not current: page_of = page
         current = join_lines(current, line)
         previous = line

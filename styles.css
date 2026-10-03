@@ -529,8 +529,6 @@ body[data-page="word"] .word-navigation { grid-template-columns: repeat(4, minma
 .wr-muted { color: var(--muted); font-size: .88rem; margin: 0; }
 .wr-warn-text { color: var(--warn); font-size: .9rem; margin: 6px 0 0; }
 .wr-error-text { color: var(--bad); margin: 0; }
-.wr-privacy summary { cursor: pointer; color: var(--muted); font-size: .88rem; }
-.wr-privacy p { max-width: 62ch; margin: 8px 0 0; color: var(--muted); font-size: .88rem; }
 .status-message.wr-error { color: var(--bad); }
 .status-message.wr-warn { color: var(--warn); }
 .status-message.wr-ok { color: var(--ok); }

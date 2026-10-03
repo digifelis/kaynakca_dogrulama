@@ -176,9 +176,6 @@
         <div class="wr-bar">
           <span id="wr-plan" class="wr-badge"></span><span id="wr-usage" class="wr-muted"></span>
           <span class="action-spacer" aria-hidden="true"></span>
-          <details class="wr-privacy"><summary>Gizlilik ve veri</summary>
-            <p>Yüklediğiniz kaynakların metni, anlamsal arama için Google Gemini’ye (embedding) ve cevap üretmek için Groq/OpenRouter’a gönderilir. Koleksiyonda makale ararsanız anahtar kelimeleriniz Semantic Scholar’a gönderilir ve seçtiğiniz açık erişimli PDF’ler sunucumuz tarafından indirilip aynı yolla işlenir. Kaynaklarınız ve makaleniz yalnız sizin hesabınızda saklanır; kaynağı veya koleksiyonu sildiğinizde parçaları ve vektörleri de silinir.</p>
-          </details>
         </div>
         <p id="wr-status" class="status-message" role="status" aria-live="polite"></p>
         <nav class="wr-tabs" aria-label="Yazım yardımcısı bölümleri">
@@ -241,9 +238,8 @@
                 <div class="wr-head"><h3 id="wr-collection-title"></h3>
                   <span class="wr-row"><button id="wr-collection-rename" class="text-button btn-quiet" type="button">Adını değiştir</button><button id="wr-collection-delete" class="text-button btn-danger" type="button">Koleksiyonu sil</button></span></div>
                 <form id="wr-collection-rename-form" class="wr-row" hidden><input id="wr-collection-rename-input" type="text" maxlength="120" aria-label="Koleksiyon adı"><button class="copy-button btn-primary" type="submit">Kaydet</button><button id="wr-collection-rename-cancel" class="text-button btn-quiet" type="button">Vazgeç</button></form>
-                <label class="wr-check"><input id="wr-consent" type="checkbox"> Kaynak metinlerinin yukarıda açıklanan dış servislere gönderilmesini kabul ediyorum.</label>
                 <div class="upload-zone wr-upload">
-                  <input id="wr-upload" type="file" multiple disabled accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" aria-describedby="wr-upload-hint">
+                  <input id="wr-upload" type="file" multiple accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" aria-describedby="wr-upload-hint">
                   <span class="upload-icon" aria-hidden="true"></span>
                   <span class="upload-copy"><strong>PDF veya Word kaynak ekleyin</strong><span id="wr-upload-hint">Birden fazla dosya seçebilirsiniz.</span></span>
                   <span class="upload-button" aria-hidden="true">Dosya seç</span>
