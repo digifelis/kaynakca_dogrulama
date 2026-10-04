@@ -68,13 +68,17 @@ ok "Sürüm: $OLD_COMMIT → $NEW_COMMIT"
 say ".env kontrolü"
 LLM_ENV="services/llm/.env"
 if [ -f "$LLM_ENV" ]; then
-  if grep -q '^GROQ_TPM=' "$LLM_ENV"; then
+  if grep -q '^GROQ_TPM=30000$' "$LLM_ENV"; then
+    # Eski varsayılan Groq ücretsiz kotasının (8000 token/dk) üstünde; 429'a yol açıyordu.
+    sed -i 's/^GROQ_TPM=30000$/GROQ_TPM=8000/' "$LLM_ENV"
+    ok "GROQ_TPM=30000 -> 8000 güncellendi."
+  elif grep -q '^GROQ_TPM=' "$LLM_ENV"; then
     ok "GROQ_TPM zaten tanımlı: $(grep '^GROQ_TPM=' "$LLM_ENV")"
   else
     # Dosya satır sonuyla bitmiyorsa önce bir satır sonu ekle.
     [ -z "$(tail -c1 "$LLM_ENV")" ] || echo >> "$LLM_ENV"
-    echo 'GROQ_TPM=30000' >> "$LLM_ENV"
-    ok "GROQ_TPM=30000 eklendi."
+    echo 'GROQ_TPM=8000' >> "$LLM_ENV"
+    ok "GROQ_TPM=8000 eklendi."
   fi
 else
   warn "$LLM_ENV yok; atlandı."
