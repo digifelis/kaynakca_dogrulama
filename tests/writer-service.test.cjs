@@ -350,7 +350,7 @@ test('scholar search returns paper metadata without PDF addresses and is rate li
   const found = await api('GET', '/scholar/search?q=' + encodeURIComponent('motivasyon, başarı'));
   assert.equal(found.status, 200); assert.equal(found.papers.length, 2); assert.equal(found.papers[0].pdf, true); assert.equal(found.papers[1].pdf, false);
   assert.doesNotMatch(JSON.stringify(found), /example.org|pdfUrl/);
-  assert.deepEqual(scholar.log.queries[0], ['motivasyon, başarı', { limit: 20, offset: 0, openAccessOnly: true }]);
+  assert.deepEqual(scholar.log.queries[0], ['motivasyon, başarı', { limit: 100, offset: 0, openAccessOnly: true }]);
   await api('GET', '/scholar/search?q=a&all=1'); assert.equal(scholar.log.queries[1][1].openAccessOnly, false);
   let last; for (let i = 0; i < 25; i++) last = await api('GET', '/scholar/search?q=motivasyon');
   assert.equal(last.status, 429);

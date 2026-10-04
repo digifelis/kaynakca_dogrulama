@@ -16,6 +16,8 @@ const Analysis = require('./word-analysis.cjs');
 const Cache = require('./lib/cache-store.cjs');
 
 const MAX_TITLE = 120, MAX_QUESTION = 4000, MAX_COLLECTIONS = 200, MAX_IMPORT = 25, SEARCHES_PER_MINUTE = 20;
+// One search fetches the first 100 hits in a single request; the browser pages through them 10 at a time.
+const SEARCH_RESULTS = 100;
 const SEARCH_LIMIT = () => Math.min(12, Math.max(2, Number(process.env.WRITER_PASSAGES) || 6));
 const httpError = (status, message, extra = {}) => Object.assign(Error(message), { status, ...extra });
 
@@ -294,7 +296,7 @@ function createService(options = {}) {
       if (route === '/scholar/search' && req.method === 'GET') {
         throttleSearch(userId);
         let found;
-        try { found = await deps.scholar.search(url.searchParams.get('q') || '', { limit: 20, offset: Number(url.searchParams.get('offset')) || 0, openAccessOnly: url.searchParams.get('all') !== '1' }); }
+        try { found = await deps.scholar.search(url.searchParams.get('q') || '', { limit: SEARCH_RESULTS, offset: 0, openAccessOnly: url.searchParams.get('all') !== '1' }); }
         catch (error) { throw httpError(error.status || 502, error.message || 'Arama yapılamadı.'); }
         return json(res, 200, { ...found, keyed: !!deps.scholar.configured() }), true;
       }

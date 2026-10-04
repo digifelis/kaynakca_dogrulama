@@ -8,7 +8,7 @@
   const S = { boot: null, view: 'write', collections: [], collectionId: null, coll: null, projectId: null, data: null, revision: 0, conflict: false, dirty: false, poll: null, saveTimer: null, suggestTimer: null, sourcesSig: '', messagesSig: '', renderLater: false };
   const memory = { get(key) { try { return localStorage.getItem(key); } catch { return null; } }, set(key, value) { try { localStorage.setItem(key, value); } catch { /* storage unavailable */ } } };
   const esc = Cite.escapeHtml;
-  const Q = { next: null, papers: [], picked: new Set(), added: new Set(), busy: false };   // paper search state
+  const Q = { page: 0, papers: [], picked: new Set(), added: new Set(), busy: false };   // paper search state
   const planTitle = id => (S.boot?.plans || []).find(plan => plan.id === id)?.title || id;
   const sourcesById = () => Object.fromEntries((S.data?.sources || []).map(source => [source.id, source]));
 
@@ -359,7 +359,7 @@
       const { collection } = await api('POST', '/collections', { name }); input.value = ''; $('collection-keywords').value = ''; await refreshCollections(); await selectCollection(collection.id);
       say(`“${collection.name}” koleksiyonu oluşturuldu; şimdi kaynak ekleyin.`, 'ok');
       // Keywords given while creating start the paper search straight away.
-      if (keywords) { $('search').open = true; $('search-q').value = keywords; runSearch(false); }
+      if (keywords) { $('search').open = true; $('search-q').value = keywords; runSearch(); }
     }
     catch (error) { fail(error); }
   });
@@ -388,29 +388,40 @@
     return `<li class="wr-paper"><label class="wr-paper-pick"><input type="checkbox" data-paper="${esc(p.paperId)}"${p.pdf && !added ? '' : ' disabled'}${Q.picked.has(p.paperId) ? ' checked' : ''}><span class="wr-paper-main"><strong>${esc(p.title || '(başlıksız)')}</strong><span class="wr-muted">${esc(paperLine(p))}${doi}</span></span></label>
       <span class="wr-paper-side">${added ? '<span class="wr-badge wr-ok">Eklendi</span>' : p.pdf ? `<span class="wr-badge wr-ok">PDF var</span><button type="button" class="text-button" data-add="${esc(p.paperId)}">Ekle</button>` : '<span class="wr-badge wr-warn">PDF yok</span>'}</span></li>`;
   }
+  const PAGE_SIZE = 10;
+  const pageItems = () => Q.papers.slice(Q.page * PAGE_SIZE, (Q.page + 1) * PAGE_SIZE);
+  function renderPager() {
+    const pages = Math.ceil(Q.papers.length / PAGE_SIZE), pager = $('search-pager');
+    pager.hidden = pages <= 1;
+    if (pages <= 1) { pager.innerHTML = ''; return; }
+    const go = (label, page, extra = '') => `<button type="button" class="text-button" data-page="${page}"${extra}>${label}</button>`;
+    pager.innerHTML = go('‹ Önceki', Q.page - 1, Q.page ? '' : ' disabled') + Array.from({ length: pages }, (_, i) => go(i + 1, i, i === Q.page ? ' aria-current="page"' : '')).join('') + go('Sonraki ›', Q.page + 1, Q.page < pages - 1 ? '' : ' disabled');
+  }
   function renderSearch() {
-    $('search-results').innerHTML = Q.papers.map(paperHtml).join('');
-    const importable = Q.papers.filter(p => p.pdf && !Q.added.has(p.paperId));
-    $('search-actions').hidden = !Q.papers.length; $('search-more').hidden = Q.next == null;
+    Q.page = Math.max(0, Math.min(Q.page, Math.ceil(Q.papers.length / PAGE_SIZE) - 1));
+    const shown = pageItems();
+    $('search-results').innerHTML = shown.map(paperHtml).join('');
+    const importable = shown.filter(p => p.pdf && !Q.added.has(p.paperId));
+    $('search-actions').hidden = !Q.papers.length;
     $('search-all').checked = !!importable.length && importable.every(p => Q.picked.has(p.paperId));
-    syncSearchButtons();
+    renderPager(); syncSearchButtons();
   }
   function syncSearchButtons() {
     const picked = Q.picked.size;
     $('search-import').disabled = !picked || Q.busy; $('search-import').textContent = picked ? `Seçilenleri koleksiyona ekle (${picked})` : 'Seçilenleri koleksiyona ekle';
     for (const button of $('search-results').querySelectorAll('button[data-add]')) button.disabled = Q.busy;
   }
-  function resetSearch() { Q.next = null; Q.papers = []; Q.picked.clear(); Q.added.clear(); $('search-results').innerHTML = ''; $('search-note').textContent = ''; $('search-actions').hidden = true; $('search-more').hidden = true; }
-  async function runSearch(more) {
+  function resetSearch() { Q.page = 0; Q.papers = []; Q.picked.clear(); Q.added.clear(); $('search-results').innerHTML = ''; $('search-note').textContent = ''; $('search-actions').hidden = true; $('search-pager').hidden = true; }
+  async function runSearch() {
     const query = $('search-q').value.trim();
     if (!query) { $('search-note').textContent = 'Aramak için anahtar kelime yazın.'; return; }
-    if (!more) { Q.papers = []; Q.picked.clear(); Q.next = null; $('search-results').innerHTML = ''; }
+    Q.papers = []; Q.picked.clear(); Q.page = 0; $('search-results').innerHTML = ''; $('search-pager').hidden = true;
     $('search-note').textContent = 'Semantic Scholar’da aranıyor…';
     try {
-      const found = await api('GET', `/scholar/search?q=${encodeURIComponent(query)}&offset=${more ? Q.next || 0 : 0}${$('search-oa').checked ? '' : '&all=1'}`);
-      Q.papers = more ? Q.papers.concat(found.papers) : found.papers; Q.next = found.next;
+      const found = await api('GET', `/scholar/search?q=${encodeURIComponent(query)}${$('search-oa').checked ? '' : '&all=1'}`);
+      Q.papers = found.papers;
       const withPdf = Q.papers.filter(p => p.pdf).length;
-      $('search-note').textContent = found.papers.length || more ? `${Number(found.total).toLocaleString('tr-TR')} sonuç; listelenen ${Q.papers.length} makalenin ${withPdf}’inde açık erişimli PDF var.${found.keyed ? '' : ' Not: Semantic Scholar API anahtarı tanımlı değil; arama düşük ortak sınırla çalışır.'}` : 'Sonuç bulunamadı; anahtar kelimeleri değiştirin veya PDF süzgecini kapatın.';
+      $('search-note').textContent = found.papers.length ? `${Number(found.total).toLocaleString('tr-TR')} sonuç bulundu; en ilgili ${Q.papers.length} tanesi 10’arlı sayfalarla listeleniyor (${withPdf} makalede açık erişimli PDF var).${found.keyed ? '' : ' Not: Semantic Scholar API anahtarı tanımlı değil; arama düşük ortak sınırla çalışır.'}` : 'Sonuç bulunamadı; anahtar kelimeleri değiştirin veya PDF süzgecini kapatın.';
       renderSearch();
     } catch (error) { $('search-note').textContent = error.message; }
   }
@@ -431,17 +442,17 @@
     Q.busy = false; renderSearch();
     try { await reload(); schedulePoll(); } catch { /* the next poll retries */ }
   }
-  $('search-form').addEventListener('submit', event => { event.preventDefault(); runSearch(false); });
-  $('search-oa').addEventListener('change', () => { if ($('search-q').value.trim()) runSearch(false); });
-  $('search-more').addEventListener('click', () => runSearch(true));
+  $('search-form').addEventListener('submit', event => { event.preventDefault(); runSearch(); });
+  $('search-oa').addEventListener('change', () => { if ($('search-q').value.trim()) runSearch(); });
+  $('search-pager').addEventListener('click', event => { const button = event.target.closest('button[data-page]'); if (!button || button.disabled) return; Q.page = Number(button.dataset.page); renderSearch(); $('search-results').scrollIntoView({ block: 'nearest' }); });
   $('search-results').addEventListener('change', event => {
     const box = event.target.closest('input[data-paper]'); if (!box) return;
     if (box.checked) Q.picked.add(box.dataset.paper); else Q.picked.delete(box.dataset.paper);
-    $('search-all').checked = Q.papers.filter(p => p.pdf && !Q.added.has(p.paperId)).every(p => Q.picked.has(p.paperId)); syncSearchButtons();
+    $('search-all').checked = pageItems().filter(p => p.pdf && !Q.added.has(p.paperId)).every(p => Q.picked.has(p.paperId)); syncSearchButtons();
   });
   $('search-results').addEventListener('click', event => { const button = event.target.closest('button[data-add]'); if (button) importPapers([button.dataset.add]); });
   $('search-all').addEventListener('change', event => {
-    for (const p of Q.papers) if (p.pdf && !Q.added.has(p.paperId)) { if (event.target.checked) Q.picked.add(p.paperId); else Q.picked.delete(p.paperId); }
+    for (const p of pageItems()) if (p.pdf && !Q.added.has(p.paperId)) { if (event.target.checked) Q.picked.add(p.paperId); else Q.picked.delete(p.paperId); }
     renderSearch();
   });
   $('search-import').addEventListener('click', () => importPapers([...Q.picked]));

@@ -586,6 +586,9 @@ body[data-page="word"] .word-navigation { grid-template-columns: repeat(4, minma
 .wr-paper { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
 .wr-paper-pick { display: flex; gap: 10px; align-items: flex-start; flex: 1 1 auto; min-width: 0; cursor: pointer; }
 .wr-paper-main { display: grid; gap: 2px; min-width: 0; }
+.wr-pager { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; justify-content: center; margin-top: 10px; }
+.wr-pager button { min-width: 36px; }
+.wr-pager button[aria-current="page"] { font-weight: 700; text-decoration: underline; }
 .wr-paper-side { display: flex; gap: 8px; align-items: center; flex: none; }
 .wr-upload { padding: 14px 16px; }
 .wr-upload input:disabled { cursor: not-allowed; }
