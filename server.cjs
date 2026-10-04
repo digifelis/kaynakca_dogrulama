@@ -20,6 +20,11 @@ function loadEnv() {
 const { allowedTarget, credentials, proxyRequest, providerConfig } = require('./lib/provider-proxy.cjs');
 const Backend = require('./lib/backend.cjs');
 const Batches = require('./lib/verify-batches.cjs');
+const Identity = require('./lib/identity.cjs');
+const Plans = require('./lib/plans.cjs');
+// A signed-in user is held to the areas of their plan; a request without a session (the public bibliography page) is not.
+const sessionUser = (req, res) => Identity.isEnforced() ? Identity.resolveUser(req, res) : null;
+const planError = error => ({ error: error.message, ...(error.code ? { code: error.code } : {}), ...(error.upgrade ? { upgrade: error.upgrade } : {}) });
 
 async function readJson(req) {
   let size = 0; const parts = [];
@@ -32,13 +37,17 @@ async function handleBatches(req, res, url) {
   if (!match) return false;
   if (req.method !== 'GET' && req.headers['x-word-request'] !== '1') return json(res, 403, { error: 'Yerel uygulama isteği gerekli.' }), true;
   try {
-    if (!match[1] && req.method === 'POST') return json(res, 201, Batches.create((await readJson(req)).references, { port: req.socket.localPort })), true;
+    if (!match[1] && req.method === 'POST') {
+      const user = sessionUser(req, res);
+      if (user) Plans.requireFeature(user.plan, 'reference', user.role);
+      return json(res, 201, Batches.create((await readJson(req)).references, { port: req.socket.localPort, web: user ? Plans.hasFeature(user.plan, 'web', user.role) : true })), true;
+    }
     const batch = match[1] && Batches.get(match[1]);
     if (!batch) return json(res, 404, { error: 'Doğrulama bulunamadı; yeniden başlatın.' }), true;
     if (match[2] && req.method === 'POST') { batch.stop(); return json(res, 200, Batches.snapshot(batch)), true; }
     if (!match[2] && req.method === 'GET') return json(res, 200, Batches.snapshot(batch)), true;
     return json(res, 405, { error: 'Desteklenmeyen yöntem' }), true;
-  } catch (error) { return json(res, error.status || 400, { error: error.message }), true; }
+  } catch (error) { return json(res, error.status || 400, planError(error)), true; }
 }
 // In queue mode the services report which keys they hold; this process holds none.
 function serviceConfig() {
@@ -88,6 +97,9 @@ function createServer({ inspectWeb = webInspect, app = null, writerStore = null 
       // In queue mode index and web lookups belong to the verification service, which holds the keys.
       if (Backend.queue() && (url.pathname === '/api/proxy' || url.pathname === '/api/web-reference')) return json(res, 404, { error: 'Bu sorgular doğrulama servisi üzerinden yapılır.' });
       if (url.pathname === '/api/web-reference') {
+        // The page's own retry asks from the browser with the session; the server's runs are limited through their options instead.
+        const user = sessionUser(req, res);
+        if (user && !Plans.hasFeature(user.plan, 'web', user.role)) return json(res, 403, planError(new Plans.PlanFeatureError(user.plan, 'web')));
         const target = url.searchParams.get('url');
         if (!target || target.length > 8000) return json(res, 400, { error: 'Geçerli web adresi gerekli' });
         const controller = new AbortController();
@@ -113,7 +125,7 @@ function createServer({ inspectWeb = webInspect, app = null, writerStore = null 
         return json(res, result.status, result.body, result.retryAfter ? { 'Retry-After': result.retryAfter } : {});
       }
       const files = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/pages.js': ['pages.js', 'text/javascript'], '/ui.js': ['ui.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'],
-        '/web-reference.js': ['web-reference.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/writer-app.js': ['writer-app.js', 'text/javascript'], '/auth-app.js': ['auth-app.js', 'text/javascript'], '/admin-app.js': ['admin-app.js', 'text/javascript'], '/admin-reports.js': ['admin-reports.js', 'text/javascript'], '/writer-cite.js': ['writer-cite.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
+        '/web-reference.js': ['web-reference.js', 'text/javascript'], '/citation-styles.js': ['citation-styles.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/writer-app.js': ['writer-app.js', 'text/javascript'], '/auth-app.js': ['auth-app.js', 'text/javascript'], '/admin-app.js': ['admin-app.js', 'text/javascript'], '/admin-reports.js': ['admin-reports.js', 'text/javascript'], '/writer-cite.js': ['writer-cite.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
       const file = files[url.pathname];
       if (!file) return json(res, 404, { error: 'Dosya bulunamadı' });
       res.writeHead(200, { 'Content-Type': `${file[1]}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });

@@ -133,7 +133,7 @@ Yeni sayfa "Yazım yardımcısı": sol panelde projeler ve kaynak listesi (durum
 ## Ek kararlar (2 Ekim 2026)
 
 - **Basic paket limitleri (rahat başlangıç):** 10 proje, projede 20 belge, belge başına 50 MB, günde 200 soru. Premium ve gold değerleri sonra belirlenir. Ücretsiz Gemini/Groq kotaları hızla tükenebilir; kota hatası kullanıcıya açık mesajla gösterilir ve embedding/cevap işleri kuyrukta sırayla işlenir.
-- **Atıf biçimi:** APA 7 yazar–yıl, sayfa numarasıyla: (Yazar, 2020, s. 12). Projedeki Word denetimiyle uyumludur. Sayısal biçimler (IEEE/Vancouver) sonraki aşamadır.
+- **Atıf biçimi:** APA 7 yazar–yıl, sayfa numarasıyla: (Yazar, 2020, s. 12). Projedeki Word denetimiyle uyumludur. Vancouver ve IEEE sayısal biçimleri projeye özel atıf stili olarak desteklenir (bkz. VANCOUVER_IEEE_PLAN.md).
 - **Künye:** Yüklenen PDF/Word'ün künyesi (yazar, yıl, başlık, DOI) önce otomatik çıkarılır (dosya metadata'sı, ilk sayfa, DOI) ve mevcut motorla (Crossref vb.) doğrulanır. Yükleme sonrası kullanıcı künyeyi görür ve düzeltebilir. Künye kesinleşmeden atıf "künye doğrulanmadı" uyarısıyla verilir; atıf yazar–yıl yerine dosya adıyla uydurulmaz.
 - **İlk skill seti:** `skills/` klasörü ve şablon, makale bölümleri (giriş, yöntem, bulgular, tartışma), literatür özeti ve karşılaştırma, akademik dile çevirme. Talimat metinleri taslaktır; son içeriği yönetici yazar.
 

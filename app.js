@@ -16,6 +16,11 @@ const copyButton = document.querySelector('#copy-button');
 const copyStatus = document.querySelector('#copy-status');
 const stopButton = document.querySelector('#stop-button');
 const retryButton = document.querySelector('#retry-button');
+const styleSelect = document.querySelector('#style-select');
+// APA, Vancouver or IEEE: the verified records are kept as structured data, so the style can change without verifying again.
+const STYLE_KEY = 'kaynakca-style', STYLE_NAMES = { apa: 'APA 7', vancouver: 'Vancouver', ieee: 'IEEE' };
+let activeStyle = 'apa';
+try { const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STYLE_KEY) : null; if (saved in STYLE_NAMES) activeStyle = saved; } catch { /* storage unavailable: APA */ }
 let runController = null;
 // With the local server the run happens there (queue services or a worker thread); the browser only polls.
 let serverMode = false;
@@ -95,9 +100,18 @@ function quotaDetails(result) {
   return `<p class="reason retry-detail">Bekleyen servis: ${escapeHtml(providers)}. Sonraki deneme: <time datetime="${new Date(at).toISOString()}">${new Date(at).toLocaleTimeString('tr-TR')}</time>. Yeniden kontrol sayısı: ${result.retryCount || 0}.${last}</p>`;
 }
 
+// The result as the chosen style writes it (APA results are returned unchanged).
+const styled = result => activeStyle === 'apa' ? result : ReferenceEngine.restyle(result, activeStyle);
 function outputReference(result) {
-  return result.appliedCrossrefCitation || result.appliedSuggestion || { text: result.corrected, html: result.correctedHtml };
+  const shown = styled(result);
+  if (shown === result) return result.appliedCrossrefCitation || result.appliedSuggestion || { text: result.corrected, html: result.correctedHtml };
+  // A suggestion the user applied is written in the new style too; a hand-edited web draft stays as typed.
+  if (result.appliedSuggestion && (result.type !== 'web' || result.appliedSuggestion.html)) return { text: shown.suggested, html: shown.suggestedHtml };
+  if (result.appliedSuggestion) return result.appliedSuggestion;
+  return { text: shown.corrected, html: shown.correctedHtml };
 }
+// Numbered styles list the references in order: "1." (Vancouver) or "[1]" (IEEE).
+const listPrefix = index => activeStyle === 'ieee' ? `[${index + 1}] ` : activeStyle === 'vancouver' ? `${index + 1}. ` : '';
 
 function applySuggestion(index) {
   if (!Number.isInteger(index)) return;
@@ -124,18 +138,19 @@ function renderResults(results) {
   resultList.innerHTML = visible.map(({ result, index }) => {
     const safeUrl = /^https?:\/\//i.test(result.url || '') ? result.url : '';
     const color = ['error', 'pending'].includes(result.status) ? 'review' : result.status;
-    const output = outputReference(result);
+    const output = outputReference(result), shown = styled(result);
     return `<article class="result-card ${color}">
       <div class="result-top"><span class="result-number">${String(index + 1).padStart(2, '0')}</span><span class="status-pill ${color}">${escapeHtml(result.statusText)}</span></div>
       <p class="raw-reference">${escapeHtml(result.raw)}</p>
       <p class="matched-reference">${output.html || escapeHtml(output.text)}</p>
-      ${result.status === 'review' && result.suggested ? `<p class="reason">${result.appliedSuggestion ? 'Öneri seçiminizle çıktıya uygulandı; otomatik doğrulama durumu değişmedi.' : 'Olası eşleşme (çıktıya uygulanmadı):'}</p>${!result.appliedSuggestion ? `<p class="matched-reference">${result.suggestedHtml || escapeHtml(result.suggested)}</p>` : ''}` : ''}
+      ${result.status === 'review' && result.suggested ? `<p class="reason">${result.appliedSuggestion ? 'Öneri seçiminizle çıktıya uygulandı; otomatik doğrulama durumu değişmedi.' : 'Olası eşleşme (çıktıya uygulanmadı):'}</p>${!result.appliedSuggestion ? `<p class="matched-reference">${shown.suggestedHtml || escapeHtml(shown.suggested)}</p>` : ''}` : ''}
       ${result.status !== 'verified' ? `<div class="result-actions">
         ${result.status === 'review' && result.suggested ? `<button class="result-action apply-suggestion" type="button" data-apply-suggestion="${index}" ${result.type === 'web' && !(result.webDraft ?? result.suggested).trim() ? 'disabled' : ''}>${result.appliedSuggestion && result.appliedSuggestion.text === (result.webDraft ?? result.suggested).trim() ? 'Özgün kayda dön' : 'Çıktıya uygula'}</button>` : ''}
         ${result.status !== 'verified' ? `<a class="result-action scholar-search" href="${escapeHtml(result.type === 'web' ? 'https://www.google.com/search?q=' + encodeURIComponent(result.raw) : scholarSearchUrl(result))}" target="_blank" rel="noopener noreferrer">${result.type === 'web' ? 'Web’de ara' : 'Google Scholar’da ara'} ↗</a>` : ''}
       </div>` : ''}
       ${result.type === 'web' && result.status === 'review' && result.suggested ? `<div class="web-editor"><label for="web-draft-${index}">Kaynakça önerisini düzenle</label><textarea id="web-draft-${index}" data-web-draft="${index}" rows="4" aria-describedby="web-draft-help-${index}">${escapeHtml(result.webDraft ?? result.suggested)}</textarea><p id="web-draft-help-${index}" class="reason">Değişiklikler taslakta tutulur. Son metni kullanmak için “Çıktıya uygula” düğmesine basın. Elle düzenlenen metin düz metin olarak aktarılır.</p></div>` : ''}
       <div class="result-meta"><span>${result.type === 'web' ? 'Alan bazında web kontrolü' : `Eşleşme: <strong>${result.score}/100</strong>`}</span><span>Kaynak: ${escapeHtml(result.provider)}</span>${safeUrl ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noreferrer">Kayıt bağlantısı ↗</a>` : ''}</div>
+      ${shown.styleNotes?.length ? `<p class="reason">${escapeHtml(STYLE_NAMES[activeStyle])} notu: ${escapeHtml(shown.styleNotes.join('; '))}.</p>` : ''}
       ${result.changes.length ? `<div class="changes">${result.changes.map(change => `<span class="change-tag">${escapeHtml(change)}</span>`).join('')}</div>` : ''}
         <p class="reason">${escapeHtml(result.appliedSuggestion ? result.reason.replace('Öneri inceleme için gösterildi; özgün kaynak değiştirilmedi.', 'Öneri seçiminizle çıktıya uygulandı.') : result.reason)}</p>
         ${result.debugRequests?.length ? `<details class="debug-panel"><summary>Geçici servis debug bilgisi</summary>${result.debugRequests.map(item => `<p><strong>${escapeHtml(item.provider)}</strong> · HTTP ${escapeHtml(item.status)}<br>API: <code>${escapeHtml(item.url)}</code><br>İstek: <code>${escapeHtml(item.requestUrl)}</code><br>${escapeHtml(item.detail)}</p>`).join('')}</details>` : ''}
@@ -149,8 +164,8 @@ function renderResults(results) {
 }
 
 function renderOutput(results) {
-  outputText.textContent = results.map(result => outputReference(result).text).join('\n\n');
-  outputText.innerHTML = results.map(result => { const output = outputReference(result); return `<p style="margin:0 0 1em">${output.html || escapeHtml(output.text)}</p>`; }).join('');
+  outputText.textContent = results.map((result, index) => listPrefix(index) + outputReference(result).text).join('\n\n');
+  outputText.innerHTML = results.map((result, index) => { const output = outputReference(result); return `<p style="margin:0 0 1em">${escapeHtml(listPrefix(index))}${output.html || escapeHtml(output.text)}</p>`; }).join('');
   outputSection.classList.remove('hidden');
 }
 
@@ -393,7 +408,26 @@ clearButton.addEventListener('click', () => {
   input.value = '';
   displayedResults = [];
   activeFilter = 'all';
-  updateCount();
+  // The style list follows the plan: Vancouver and IEEE belong to plans with that area (a visitor without an account is not held to a plan).
+function syncStyleAccess() {
+  if (!styleSelect || !styleSelect.querySelectorAll) return;
+  const allowed = typeof window === 'undefined' || !window.Auth?.hasFeature || window.Auth.hasFeature('styles');
+  styleSelect.querySelectorAll('option').forEach(option => { if (option.value !== 'apa') { option.disabled = !allowed; option.textContent = STYLE_NAMES[option.value] + (allowed ? '' : ' (paketinizde yok)'); } });
+  if (!allowed && activeStyle !== 'apa') setStyle('apa');
+  styleSelect.value = activeStyle;
+}
+function setStyle(style) {
+  activeStyle = style in STYLE_NAMES ? style : 'apa';
+  try { if (typeof localStorage !== 'undefined') localStorage.setItem(STYLE_KEY, activeStyle); } catch { /* the choice is simply not remembered */ }
+  if (displayedResults.length) { renderResults(displayedResults); renderOutput(displayedResults); }
+}
+if (styleSelect) {
+  styleSelect.value = activeStyle;
+  styleSelect.addEventListener?.('change', () => setStyle(styleSelect.value));
+}
+if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('auth-change', syncStyleAccess);
+syncStyleAccess();
+updateCount();
   input.focus();
   resultsSection.classList.add('hidden');
   outputSection.classList.add('hidden');

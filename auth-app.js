@@ -3,6 +3,8 @@
 (() => {
   const FORM_PAGES = { giris: 'login', kayit: 'register', 'sifremi-unuttum': 'forgot', 'sifre-sifirla': 'reset', 'parola-degistir': 'change' };
   const PROTECTED = new Set(['word', 'icerik', 'yazim', 'profil', 'admin']);
+  // Which area of the plan each page needs (any one of the list opens it).
+  const PAGE_FEATURES = { kaynakca: ['reference'], word: ['orphan', 'reference'], icerik: ['content'], yazim: ['writer'] };
   const state = { loaded: false, user: null, config: { registrationOpen: false, ldapEnabled: false, emailEnabled: false }, usage: null };
   const fmt = n => Number(n || 0).toLocaleString('tr-TR');
   const MB = 1024 * 1024;
@@ -37,7 +39,7 @@
       state.user = me.user; state.usage = me.user ? me : null;
     } catch { state.user = null; }
     state.loaded = true;
-    renderMenu();
+    renderMenu(); applyFeatures();
     window.dispatchEvent(new CustomEvent('auth-change'));
   }
 
@@ -64,6 +66,25 @@
     if (page === 'admin' && state.user?.role !== 'admin') return '#/profil';
     if (page === 'giris' && state.user && !state.user.mustChangePassword && !location.hash.startsWith('#/parola-degistir')) return '#/profil';
     return null;
+  }
+
+  // ---- areas of the plan: a signed-in person lacking an area sees it locked; the public bibliography page needs no plan
+  const hasFeature = feature => !state.user || (state.user.features || []).includes(feature);
+  const labelOf = feature => state.usage?.plan?.featureCatalog?.find(item => item.id === feature)?.label || feature;
+  function lock(page) {
+    const needs = PAGE_FEATURES[page];
+    if (!needs || !state.loaded || !state.user || needs.some(hasFeature)) return null;
+    const upgrade = state.usage?.plan?.upgrades?.[needs[0]];
+    return { title: labelOf(needs[0]) + ' paketinizde yok', text: `${labelOf(needs[0])}, ${state.usage?.plan?.title || state.user.plan} paketinde bulunmuyor.` + (upgrade ? ` ${upgrade} pakete geçerek kullanabilirsiniz.` : ' Yöneticinizle iletişime geçin.') };
+  }
+  function applyFeatures() {
+    const missing = !state.user ? [] : Object.values(PAGE_FEATURES).flat().concat(['export', 'web', 'scholar', 'styles']).filter((id, i, all) => all.indexOf(id) === i && !hasFeature(id));
+    document.documentElement.dataset.no = missing.join(' ');
+    document.querySelectorAll('[data-page-link]').forEach(link => {
+      const needs = PAGE_FEATURES[link.dataset.pageLink], locked = !!needs && !!state.user && !needs.some(hasFeature);
+      link.classList.toggle('is-locked', locked);
+      if (locked) link.title = labelOf(needs[0]) + ' paketinizde yok'; else link.removeAttribute('title');
+    });
   }
 
   // ---- menu in the top bar
@@ -163,7 +184,7 @@
     if (!box || !state.user) return;
     let data;
     try { data = await api('GET', '/api/auth/me'); } catch { return; }
-    state.user = data.user; state.usage = data; renderMenu();
+    state.user = data.user; state.usage = data; renderMenu(); applyFeatures();
     const { user, plan, usage, monthTokens } = data, limits = plan.limits, emailNote = hashParams().get('email');
     const row = (label, value) => h('tr', {}, h('th', {}, label), h('td', {}, value));
     const profileForm = form([field('Görünen ad', input('displayName', 'text', { value: user.displayName || '', required: false, maxlength: 80 })),
@@ -189,11 +210,12 @@
           row('Günlük soru', fmt(limits.questionsPerDay)), row('Aylık token', limits.monthlyTokens ? fmt(limits.monthlyTokens) : 'Sınırsız'),
           row('Belge başına sorgulanacak kaynak', limits.referencesPerDocument ? fmt(limits.referencesPerDocument) : 'Sınırsız'),
           row('Bu ay sorgulanan kaynak', limits.monthlyReferences ? `${fmt(data.monthReferences)} / ${fmt(limits.monthlyReferences)}` : `${fmt(data.monthReferences)} (sınırsız)`),
-          row('Kayıtlı Word/PDF belge', limits.wordDocuments ? fmt(limits.wordDocuments) : 'Sınırsız')),
+          row('Kayıtlı Word/PDF belge', limits.wordDocuments ? fmt(limits.wordDocuments) : 'Sınırsız'),
+          row('Erişilebilen alanlar', (plan.featureCatalog || []).filter(item => (plan.features || []).includes(item.id)).map(item => item.label).join(', ') || '—')),
         plan.nextPlan ? h('p', { class: 'acct-upgrade' }, `${plan.nextPlan.title} paketinde: ${fmt(plan.nextPlan.limits.projects)} proje, ${plan.nextPlan.limits.monthlyTokens ? fmt(plan.nextPlan.limits.monthlyTokens) + ' token' : 'sınırsız token'}. Paket değişikliği için yöneticinize başvurun.`) : null)));
   }
 
-  window.Auth = { state, gate, api, h, fmt, refresh, mount(page) { if (FORM_PAGES[page]) mountForm(FORM_PAGES[page]); },
+  window.Auth = { state, gate, lock, hasFeature, api, h, fmt, refresh, mount(page) { if (FORM_PAGES[page]) mountForm(FORM_PAGES[page]); },
     get user() { return state.user; }, get loaded() { return state.loaded; }, FORM_PAGES, hashParams };
   window.addEventListener('app-page-change', event => {
     if (event.detail.page === 'giris') mountForm(FORM_PAGES[location.hash.match(/^#\/([a-z-]+)/)?.[1]] || 'login');

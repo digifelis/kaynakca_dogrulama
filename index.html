@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Kaynakçanızı akademik kayıtlarla karşılaştırın, düzeltmeleri görün ve APA 7 çıktısını kopyalayın." />
+    <meta name="description" content="Kaynakçanızı akademik kayıtlarla karşılaştırın, düzeltmeleri görün ve APA 7, Vancouver veya IEEE çıktısını kopyalayın." />
     <meta name="color-scheme" content="light dark" />
     <title>Kaynakça Masası — Doğrula ve düzelt</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -31,9 +31,12 @@
     <main id="top" class="shell">
       <section class="hero">
         <h1>Kaynakçanızı doğrulayın.</h1>
-        <p class="hero-lede">Kaynak listenizi yapıştırın, akademik kayıtlarla karşılaştırın ve düzeltilmiş APA 7 çıktısını alın.</p>
+        <p class="hero-lede">Kaynak listenizi yapıştırın, akademik kayıtlarla karşılaştırın ve düzeltilmiş APA 7, Vancouver veya IEEE çıktısını alın.</p>
       </section>
 
+      <div id="page-locked" class="app-page" hidden>
+        <div class="acct-card"><h2 id="locked-title">Bu alan paketinizde yok</h2><p id="locked-text" class="acct-lead"></p><a class="copy-button" href="#/profil">Paketimi gör</a></div>
+      </div>
       <div id="page-giris" class="app-page" hidden></div>
       <div id="page-profil" class="app-page" hidden></div>
       <div id="page-admin" class="app-page" hidden></div>
@@ -43,7 +46,7 @@
         <div class="upload-zone">
           <input id="word-upload" type="file" accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" aria-describedby="word-upload-hint">
           <span class="upload-icon" aria-hidden="true"></span>
-          <span class="upload-copy"><strong>Makalenizi seçin ya da buraya bırakın</strong><span id="word-upload-hint">Word (.docx) veya PDF, en fazla 20 MB. Türkçe ve İngilizce APA yazar–yıl atıfları desteklenir; PDF salt okunur incelenir.</span></span>
+          <span class="upload-copy"><strong>Makalenizi seçin ya da buraya bırakın</strong><span id="word-upload-hint">Word (.docx) veya PDF, en fazla 20 MB. Türkçe ve İngilizce APA yazar–yıl atıfları ile Vancouver/IEEE numaralı atıflar ([1], [1-3]) desteklenir; PDF salt okunur incelenir.</span></span>
           <span class="upload-button" aria-hidden="true">Dosya seç</span>
         </div>
         <p id="word-message" class="status-message" role="status" aria-live="polite"></p>
@@ -53,9 +56,10 @@
             <button id="word-verify" class="copy-button btn-primary" type="button">Kaynakları doğrula</button>
             <button id="word-content" class="copy-button btn-secondary" type="button">İçerik kontrolünü başlat</button>
             <button id="word-stop" class="text-button btn-quiet" type="button">Durdur</button>
+            <label class="word-style">Atıf stili <select id="word-style" aria-label="Atıf stili"><option value="auto">Otomatik</option><option value="apa">APA 7 (yazar–yıl)</option><option value="vancouver">Vancouver [1]</option><option value="ieee">IEEE [1]</option></select></label>
             <span class="action-spacer" aria-hidden="true"></span>
-            <button id="word-download" class="copy-button btn-secondary" type="button">Nihai Word dosyasını indir</button>
-            <button id="word-report" class="text-button btn-quiet" type="button">Raporu indir</button>
+            <button id="word-download" data-feature="export" class="copy-button btn-secondary" type="button">Nihai Word dosyasını indir</button>
+            <button id="word-report" data-feature="export" class="text-button btn-quiet" type="button">Raporu indir</button>
             <button id="word-delete" class="text-button btn-danger" type="button">Belgeyi sil</button>
           </div>
           <p id="word-format-note" class="format-note" hidden></p>
@@ -122,9 +126,10 @@
             <button hidden id="content-verify" class="copy-button btn-secondary" type="button">Kaynakları doğrula</button>
             <button hidden id="content-content" class="copy-button btn-secondary" type="button">Atıfları kontrol et</button>
             <button id="content-stop" class="text-button btn-quiet" type="button">Durdur</button>
+            <label class="word-style">Atıf stili <select id="content-style" aria-label="Atıf stili"><option value="auto">Otomatik</option><option value="apa">APA 7 (yazar–yıl)</option><option value="vancouver">Vancouver [1]</option><option value="ieee">IEEE [1]</option></select></label>
             <span class="action-spacer" aria-hidden="true"></span>
-            <button id="content-download" class="copy-button btn-secondary" type="button">Nihai Word dosyasını indir</button>
-            <button id="content-report" class="text-button btn-quiet" type="button">Raporu indir</button>
+            <button id="content-download" data-feature="export" class="copy-button btn-secondary" type="button">Nihai Word dosyasını indir</button>
+            <button id="content-report" data-feature="export" class="text-button btn-quiet" type="button">Raporu indir</button>
             <button id="content-delete" class="text-button btn-danger" type="button">Belgeyi sil</button>
           </div>
           <p id="content-format-note" class="format-note" hidden></p>
@@ -188,6 +193,7 @@
             <div class="wr-row wr-project-row">
               <label class="wr-field wr-project-select">Proje<select id="wr-project" aria-label="Proje"></select></label>
               <label class="wr-field wr-language">Makale dili<select id="wr-language" aria-label="Makale dili"><option value="tr">Türkçe</option><option value="en">English</option></select></label>
+              <label class="wr-field wr-language">Atıf stili<select id="wr-citation-style" aria-label="Atıf stili"><option value="apa">APA 7</option><option value="vancouver">Vancouver</option><option value="ieee">IEEE</option></select></label>
               <button id="wr-new" class="copy-button btn-secondary" type="button">Yeni proje</button><button id="wr-rename" class="text-button btn-quiet" type="button">Adını değiştir</button><button id="wr-delete" class="text-button btn-danger" type="button">Projeyi sil</button>
             </div>
             <form id="wr-title-form" class="wr-row" hidden><input id="wr-title-input" type="text" maxlength="120" aria-label="Proje adı" placeholder="Proje adı"><button class="copy-button btn-primary" type="submit">Kaydet</button><button id="wr-title-cancel" class="text-button btn-quiet" type="button">Vazgeç</button></form>
@@ -215,7 +221,7 @@
               <button type="button" data-wr-cmd="ul" title="Madde işaretli liste">• Liste</button><button type="button" data-wr-cmd="ol" title="Numaralı liste">1. Liste</button>
             </div>
             <div id="wr-editor" class="wr-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Makale metni" spellcheck="true" data-placeholder="Makaleniz burada oluşur. Cevaplardaki “Editöre ekle” ile metin ekleyebilir veya doğrudan yazabilirsiniz."></div>
-            <div class="wr-row"><span id="wr-saved" class="wr-muted" role="status"></span><span class="action-spacer" aria-hidden="true"></span><button id="wr-download" class="copy-button btn-secondary" type="button">Word olarak indir</button></div>
+            <div class="wr-row"><span id="wr-saved" class="wr-muted" role="status"></span><span class="action-spacer" aria-hidden="true"></span><button id="wr-download" data-feature="export" class="copy-button btn-secondary" type="button">Word olarak indir</button></div>
             <details class="wr-block" open><summary>Kaynakça (<span id="wr-bib-count">0</span>)</summary>
               <p class="wr-muted">Metinde atıf yapılan kaynaklardan otomatik oluşur; Word çıktısına da eklenir.</p>
               <ol id="wr-bib" class="wr-bib"></ol>
@@ -244,7 +250,7 @@
                   <span class="upload-copy"><strong>PDF veya Word kaynak ekleyin</strong><span id="wr-upload-hint">Birden fazla dosya seçebilirsiniz.</span></span>
                   <span class="upload-button" aria-hidden="true">Dosya seç</span>
                 </div>
-                <details id="wr-search" class="wr-search">
+                <details id="wr-search" class="wr-search" data-feature="scholar">
                   <summary>Semantic Scholar’da makale ara ve koleksiyona ekle</summary>
                   <form id="wr-search-form" class="wr-row">
                     <input id="wr-search-q" type="text" maxlength="200" aria-label="Anahtar kelimeler" placeholder="Anahtar kelimeler (virgülle ayırabilirsiniz)">
@@ -259,7 +265,11 @@
                   <ul id="wr-search-results" class="wr-papers"></ul>
                   <nav id="wr-search-pager" class="wr-pager" aria-label="Arama sonuç sayfaları" hidden></nav>
                 </details>
-                <div id="wr-failed-bar" class="wr-row wr-failed-bar" hidden><span id="wr-failed-note" class="wr-muted" role="status"></span><button id="wr-redownload" class="copy-button btn-secondary" type="button" hidden>İndirilemeyenleri yeniden indir</button><button id="wr-reembed" class="copy-button btn-secondary" type="button" hidden>Anlamsal aramayı yeniden dene</button></div>
+                <div id="wr-failed-bar" class="wr-row wr-failed-bar" hidden><span id="wr-failed-note" class="wr-muted" role="status"></span><button id="wr-retry-failed" class="copy-button btn-secondary" type="button" hidden>Hatalı eklemeleri yeniden dene</button></div>
+                <div id="wr-progress" class="wr-progress" role="status" aria-live="polite" hidden>
+                  <div class="wr-progress-top"><span id="wr-progress-label">Kaynaklar hazırlanıyor</span><span id="wr-progress-value">0%</span></div>
+                  <div id="wr-progress-bar" class="wr-progress-track" role="progressbar" aria-label="Koleksiyon hazırlık ilerlemesi" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="wr-progress-fill" class="wr-progress-fill"></div></div>
+                </div>
                 <div id="wr-sources" class="wr-sources"></div>
               </div>
             </section>
@@ -290,8 +300,8 @@
             <span class="select-wrap">
               <select id="style-select">
                 <option value="apa">APA 7</option>
-                <option value="vancouver">Vancouver (yakında)</option>
-                <option value="ieee">IEEE (yakında)</option>
+                <option value="vancouver">Vancouver</option>
+                <option value="ieee">IEEE</option>
               </select>
             </span>
             <button id="verify-button" class="primary-button" type="button">Doğrula ve düzelt</button>
@@ -336,7 +346,7 @@
           <div class="output-heading">
             <div>
               <h2 id="output-title">Düzeltilmiş kaynakça</h2>
-              <p>Doğrulanmış kayıtlara APA 7 temel biçim kuralları uygulandı. İnceleme önerilerini Çıktıya uygula düğmesiyle seçebilirsiniz. Seçilmemiş belirsiz kayıtlar özgün kalır; özel adların yazımını kontrol edin.</p>
+              <p>Doğrulanmış kayıtlara seçtiğiniz biçimin (APA 7, Vancouver veya IEEE) temel kuralları uygulandı; Vancouver ve IEEE listeleri numaralıdır. İnceleme önerilerini Çıktıya uygula düğmesiyle seçebilirsiniz. Seçilmemiş belirsiz kayıtlar özgün kalır; özel adların yazımını kontrol edin.</p>
             </div>
             <button id="copy-button" class="copy-button btn-primary" type="button">Tümünü kopyala</button>
           </div>
@@ -353,6 +363,7 @@
     </main>
     <script src="providers.js" defer></script>
     <script src="web-reference.js" defer></script>
+    <script src="citation-styles.js" defer></script>
     <script src="reference-engine.js" defer></script>
     <script src="app.js" defer></script>
     <script src="word-app.js" defer></script>

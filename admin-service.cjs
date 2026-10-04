@@ -63,6 +63,10 @@ function createAdminService({ app, writerStore = null, wordService = null, llmKe
     if (target.role === 'admin' && target.status === 'active' && !stays && accounts.users.countAdmins() <= 1) throw httpError(400, 'Son etkin yönetici hesabı kaldırılamaz veya devre dışı bırakılamaz.', 'last_admin');
   }
 
+  function parseFeatures(value) {
+    if (!Array.isArray(value) || value.some(id => !Plans.FEATURE_IDS.includes(id))) throw httpError(400, 'Alan listesi geçersiz.', 'bad_request');
+    return Plans.FEATURE_IDS.filter(id => value.includes(id));
+  }
   function parsePlan(input, existing) {
     const id = existing?.id || String(input.id || '').trim().toLowerCase();
     if (!/^[a-z0-9][a-z0-9-]{1,29}$/.test(id)) throw httpError(400, 'Paket kodu 2–30 karakter olmalı; küçük harf, rakam ve "-" kullanılabilir.', 'bad_request');
@@ -72,7 +76,8 @@ function createAdminService({ app, writerStore = null, wordService = null, llmKe
       documentBytes: int(input.documentBytes ?? existing?.documentBytes, 'Belge boyutu', MB, 200 * MB), questionsPerDay: int(input.questionsPerDay ?? existing?.questionsPerDay, 'Günlük soru sayısı', 1, 10000000),
       monthlyTokens: int(input.monthlyTokens ?? existing?.monthlyTokens ?? 0, 'Aylık token kotası', 0, 100000000000),
       referencesPerDocument: int(input.referencesPerDocument ?? existing?.referencesPerDocument ?? 0, 'Belge başına kaynak sayısı', 0, 1000000), monthlyReferences: int(input.monthlyReferences ?? existing?.monthlyReferences ?? 0, 'Aylık sorgulanan kaynak sayısı', 0, 100000000),
-      wordDocuments: int(input.wordDocuments ?? existing?.wordDocuments ?? 0, 'Kayıtlı Word/PDF belge sayısı', 0, 1000000), active: input.active ?? existing?.active ?? true };
+      wordDocuments: int(input.wordDocuments ?? existing?.wordDocuments ?? 0, 'Kayıtlı Word/PDF belge sayısı', 0, 1000000), active: input.active ?? existing?.active ?? true,
+      features: parseFeatures(input.features ?? existing?.features ?? Plans.defaultFeatures(id)) };
   }
   function parseLdap(input) {
     const out = {};
@@ -214,7 +219,7 @@ function createAdminService({ app, writerStore = null, wordService = null, llmKe
       }
 
       // ---- plans
-      if (route === '/plans' && req.method === 'GET') return json(res, 200, { plans: accounts.plans.list().map(p => ({ ...p, users: accounts.plans.usersOn(p.id) })) }), true;
+      if (route === '/plans' && req.method === 'GET') return json(res, 200, { plans: accounts.plans.list().map(p => ({ ...p, users: accounts.plans.usersOn(p.id) })), featureCatalog: Plans.FEATURES }), true;
       if (route === '/plans' && req.method === 'POST') {
         const input = await readBody(req), plan = parsePlan(input);
         if (accounts.plans.get(plan.id)) throw httpError(409, 'Bu paket kodu kullanılıyor.', 'plan_exists');

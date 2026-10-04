@@ -1,6 +1,6 @@
 # Kaynakça Masası
 
-Kaynakçayı yapıştırıp açık akademik kayıtlarla karşılaştıran, güçlü eşleşmeleri APA 7 biçiminde düzelten tek sayfalık ilk sürüm.
+Kaynakçayı yapıştırıp açık akademik kayıtlarla karşılaştıran, güçlü eşleşmeleri APA 7, Vancouver veya IEEE biçiminde düzelten tek sayfalık ilk sürüm.
 
 ## Çalıştırma
 
@@ -74,7 +74,7 @@ docker compose up --build
 Word incelemesinde **Atıf sorunları**, **Yetim atıflar**, **Yetim kaynakça**, **Atıflar ve içerik kanıtları** ve **Kaynakça kayıtları** ayrı listelerde gösterilir. Sayaçlara tıklayarak liste değiştirebilir, etkin listede arama yapabilirsiniz. Bulguların **İlgili paragrafı göster** çekmecesi metni kartın içinde açar. İçerik listesinde sonuç durumuna göre filtreler bulunur. Açık çekmeceler ve toplu düzeltme seçimleri liste değişikliklerinde korunur. İndirilen denetim raporu arama ve filtrelerden bağımsız olarak tüm kayıtları içerir.
 
 1. Kaynakçayı metin alanına yapıştırın veya örneklerden birini seçin.
-2. APA 7 biçimini seçin.
+2. APA 7, Vancouver veya IEEE biçimini seçin (Vancouver ve IEEE listeleri numaralıdır).
 3. `Doğrula ve düzelt` düğmesine basın.
 4. Kayıt kartlarında eşleşme puanını, sağlayıcıyı ve yapılan değişiklikleri inceleyin.
 5. Düzeltilmiş kaynakçayı kopyalayın.

@@ -10,6 +10,17 @@ function createWordWorkspace(prefix,mode) {
     $('inspection')?.addEventListener('close',()=>{inspectedCitation=null;});
   }
   const selectedChecks=()=>Object.fromEntries(['references','citations','llm'].map(key=>[key,$('check-'+key)?.checked!==false]));
+  // Citation style of the document: detected from the numbering, or chosen here. Vancouver and IEEE belong to plans with that area.
+  const STYLE_LABELS={apa:'APA 7',vancouver:'Vancouver',ieee:'IEEE'};
+  $('style')?.addEventListener?.('change',()=>action('style',{style:$('style').value}));
+  function renderStyle(){
+    const select=$('style');if(!select||!select.options||!state)return;
+    const allowed=!window.Auth?.hasFeature||window.Auth.hasFeature('styles');
+    for(const option of select.options){if(option.value==='vancouver'||option.value==='ieee'){option.disabled=!allowed;option.textContent=STYLE_LABELS[option.value]+' [1]'+(allowed?'':' (paketinizde yok)');}}
+    select.options[0].textContent=`Otomatik (algılanan: ${STYLE_LABELS[state.citationStyle]||'APA 7'})`;
+    select.value=state.styleAuto===false?state.citationStyle:'auto';
+    select.disabled=busy||!!state.job?.running;
+  }
   if(isContent)$('runchecks')?.addEventListener('click',()=>action('runchecks',{checks:selectedChecks()}));
   const paragraphDrafts=new Map();let saveTimer,saveTask=null;
   const remember=()=>{if(typeof localStorage!=='undefined'&&state)localStorage.setItem(prefix+'-last-document',state.id);};
@@ -190,6 +201,7 @@ function createWordWorkspace(prefix,mode) {
     renderQueryMonitor();
     for(const action of ['range','verify','content','download','upload','applymany'])$(action).disabled=busy||job.running;
     // PDF manuscripts are analysed read-only: no corrected file and no in-document fixes.
+    renderStyle();
     const pdf=state.format==='pdf';$('download').hidden=pdf;$('applymany').hidden=pdf;
     if($('format-note')){$('format-note').hidden=!pdf;$('format-note').textContent=pdf?'PDF belgesi salt okunur incelenir: atıf, kaynakça ve içerik denetimleri çalışır, ancak düzeltmeler dosyaya yazılamaz. Önerileri kartlarda görebilir, denetim raporunu indirebilirsiniz. Paragraf ve kaynakça sınırları sayfa düzeninden çıkarıldığı için kaynakça bölümünü gerekirse elle seçin.':'';}
     for(const id of [...selected])if(!state.findings.some(f=>f.id===id&&f.patch))selected.delete(id);

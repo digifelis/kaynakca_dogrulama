@@ -91,8 +91,12 @@ test('store: stale manuscript saves are refused; interrupted work is marked on r
   assert.throws(() => store.saveManuscript(u, p.id, '<p>2</p>', 0), e => e.status === 409);
   const d = store.addDocument(u, p.id, { fileName: 'x.pdf' });
   const m = store.addMessage(u, p.id, { role: 'assistant', status: 'working' });
-  assert.deepEqual(store.recoverInterrupted(), { documents: 1, messages: 1 });
+  const saved = store.addDocument(u, p.id, { fileName: 'saved.pdf' });
+  store.insertChunks(u, p.id, saved.id, [{ text: 'bir parça' }]); store.updateDocument(u, saved.id, { status: 'embedding' });
+  assert.deepEqual(store.recoverInterrupted(), { documents: 2, messages: 1 });
   assert.equal(store.getDocument(u, d.id).status, 'error'); assert.equal(store.getMessage(u, m.id).status, 'error');
+  // Passages were already saved: the source stays usable with keyword search and only its embedding is repeated.
+  assert.equal(store.getDocument(u, saved.id).status, 'ready'); assert.equal(store.getDocument(u, saved.id).searchMode, 'keyword');
   store.addQuestion(u); store.addQuestion(u); assert.equal(store.questionsToday(u), 2); assert.equal(store.questionsToday('d'.repeat(32)), 0);
   store.close();
 });

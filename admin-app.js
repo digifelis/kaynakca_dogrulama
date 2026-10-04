@@ -104,19 +104,19 @@
 
   // ---- plans
   async function plans(panel) {
-    const data = (await api('GET', '/api/admin/plans')).plans;
-    panel.append(h('div', { class: 'adm-toolbar' }, h('button', { type: 'button', class: 'copy-button', onclick: () => editPlan(null, data) }, 'Yeni paket')),
-      table(['Sıra', 'Kod', 'Ad', 'Proje', 'Kaynak/proje', 'Dosya', 'Günlük soru', 'Aylık token', 'Kaynak/belge sorgu', 'Aylık sorgu', 'Word/PDF belge', 'Kullanıcı', 'Durum', ''], data.map(p => h('tr', {}, h('td', {}, p.sortOrder), h('td', {}, h('code', {}, p.id)), h('td', {}, h('strong', {}, p.title), p.description ? h('small', { class: 'adm-sub' }, p.description) : null),
+    const response = await api('GET', '/api/admin/plans'), data = response.plans, catalog = response.featureCatalog || [];
+    panel.append(h('div', { class: 'adm-toolbar' }, h('button', { type: 'button', class: 'copy-button', onclick: () => editPlan(null, data, catalog) }, 'Yeni paket')),
+      table(['Sıra', 'Kod', 'Ad', 'Proje', 'Kaynak/proje', 'Dosya', 'Günlük soru', 'Aylık token', 'Kaynak/belge sorgu', 'Aylık sorgu', 'Word/PDF belge', 'Alanlar', 'Kullanıcı', 'Durum', ''], data.map(p => h('tr', {}, h('td', {}, p.sortOrder), h('td', {}, h('code', {}, p.id)), h('td', {}, h('strong', {}, p.title), p.description ? h('small', { class: 'adm-sub' }, p.description) : null),
         h('td', {}, fmt(p.projects)), h('td', {}, fmt(p.documentsPerProject)), h('td', {}, Math.round(p.documentBytes / MB) + ' MB'), h('td', {}, fmt(p.questionsPerDay)), h('td', {}, p.monthlyTokens ? fmt(p.monthlyTokens) : 'Sınırsız'),
         h('td', {}, p.referencesPerDocument ? fmt(p.referencesPerDocument) : 'Sınırsız'), h('td', {}, p.monthlyReferences ? fmt(p.monthlyReferences) : 'Sınırsız'), h('td', {}, p.wordDocuments ? fmt(p.wordDocuments) : 'Sınırsız'),
-        h('td', {}, fmt(p.users)), h('td', {}, p.active ? 'Etkin' : 'Pasif'), h('td', {}, h('button', { type: 'button', class: 'text-button', onclick: () => editPlan(p, data) }, 'Düzenle'))))),
-      h('p', { class: 'acct-muted' }, 'Paketlerin sırası yükseltme önerisini ve skill erişimini belirler (sıra ne kadar büyükse paket o kadar üsttedir). Aylık token, belge başına sorgulanacak kaynak, aylık sorgulanan kaynak ve kayıtlı Word/PDF belge sayısı 0 ise sınırsızdır.'));
+        h('td', { title: (p.features || []).map(id => catalog.find(item => item.id === id)?.label || id).join(', ') }, `${(p.features || []).length} / ${catalog.length}`), h('td', {}, fmt(p.users)), h('td', {}, p.active ? 'Etkin' : 'Pasif'), h('td', {}, h('button', { type: 'button', class: 'text-button', onclick: () => editPlan(p, data, catalog) }, 'Düzenle'))))),
+      h('p', { class: 'acct-muted' }, 'Alanlar sütunu paketin açtığı alan sayısını gösterir (ayrıntı için üzerine gelin). Paketlerin sırası yükseltme önerisini ve skill erişimini belirler (sıra ne kadar büyükse paket o kadar üsttedir). Aylık token, belge başına sorgulanacak kaynak, aylık sorgulanan kaynak ve kayıtlı Word/PDF belge sayısı 0 ise sınırsızdır.'));
   }
-  function editPlan(plan, all) {
+  function editPlan(plan, all, catalog = []) {
     const status = h('div', {}), mk = (label, name, value, type = 'text', extra = {}) => h('label', { class: 'acct-field' }, h('span', {}, label), h('input', { name, type, value: value ?? '', required: name !== 'description', ...extra }));
     const f = h('form', { class: 'acct-form', onsubmit: guard(status, async event => {
       event.preventDefault(); const v = Object.fromEntries(new FormData(f));
-      const body = { title: v.title, description: v.description, sortOrder: Number(v.sortOrder), projects: Number(v.projects), documentsPerProject: Number(v.documentsPerProject), documentBytes: Math.round(Number(v.documentMb) * MB), questionsPerDay: Number(v.questionsPerDay), monthlyTokens: Number(v.monthlyTokens), referencesPerDocument: Number(v.referencesPerDocument), monthlyReferences: Number(v.monthlyReferences), wordDocuments: Number(v.wordDocuments), active: v.active === 'on' };
+      const body = { title: v.title, description: v.description, sortOrder: Number(v.sortOrder), projects: Number(v.projects), documentsPerProject: Number(v.documentsPerProject), documentBytes: Math.round(Number(v.documentMb) * MB), questionsPerDay: Number(v.questionsPerDay), monthlyTokens: Number(v.monthlyTokens), referencesPerDocument: Number(v.referencesPerDocument), monthlyReferences: Number(v.monthlyReferences), wordDocuments: Number(v.wordDocuments), active: v.active === 'on', features: [...f.querySelectorAll('input[name=feature]:checked')].map(box => box.value) };
       if (plan) await api('PUT', '/api/admin/plans/' + plan.id, body); else await api('POST', '/api/admin/plans', { ...body, id: v.id });
       d.close(); render();
     }) },
@@ -126,6 +126,9 @@
       mk('Aylık token (0 = sınırsız)', 'monthlyTokens', plan?.monthlyTokens ?? 0, 'number', { min: 0 }),
       mk('Belge başına sorgulanacak kaynak (0 = sınırsız)', 'referencesPerDocument', plan?.referencesPerDocument ?? 150, 'number', { min: 0 }), mk('Aylık sorgulanan kaynak (0 = sınırsız)', 'monthlyReferences', plan?.monthlyReferences ?? 1000, 'number', { min: 0 }),
       mk('Kayıtlı Word/PDF belge sayısı (0 = sınırsız)', 'wordDocuments', plan?.wordDocuments ?? 20, 'number', { min: 0 }),
+      h('fieldset', { class: 'acct-features' }, h('legend', {}, 'Erişilebilen alanlar'),
+        ...catalog.map(item => h('label', { class: 'acct-check' }, h('input', { type: 'checkbox', name: 'feature', value: item.id, checked: (plan ? plan.features : ['reference', 'orphan']).includes(item.id) }), ' ' + item.label)),
+        h('small', { class: 'acct-muted' }, 'İşaretlenmeyen alanlar bu paketteki kullanıcılara kilitli görünür; Semantic Scholar yalnız yazım yardımcısıyla birlikte anlam kazanır. Yönetici hesapları her alana erişir.')),
       h('label', { class: 'acct-check' }, h('input', { type: 'checkbox', name: 'active', checked: plan ? plan.active : true }), ' Yeni atamalar için etkin'),
       h('button', { type: 'submit', class: 'copy-button' }, 'Kaydet'),
       plan ? h('button', { type: 'button', class: 'copy-button btn-danger', onclick: guard(status, async () => {

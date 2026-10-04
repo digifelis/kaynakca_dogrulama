@@ -23,7 +23,7 @@ const SECRET = file(PAGES(
   'Dolanıklık ölçümleri düşük sıcaklıkta yapılmıştır ve kuantum durumlarının kararlılığı ayrıca incelenmiştir.'),
   { title: 'Kuantum dolanıklık protokolü', author: 'Zeynep Kara' });
 
-async function setup({ embedBroken = false, embedAvailable = true, llmDelay = null, python, scholar } = {}) {
+async function setup({ embedBroken = false, embedAvailable = true, llmDelay = null, python, scholar, verifyMeta = async () => null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'writer-svc-'));
   process.env.WRITER_DATA_DIR = dir; Identity._reset();
   const store = createStore(dir);
@@ -43,7 +43,7 @@ async function setup({ embedBroken = false, embedAvailable = true, llmDelay = nu
     const raw = Buffer.from(request.data, 'base64').toString('utf8').slice(5);
     return { ...JSON.parse(raw), warnings: [] };
   };
-  const service = createService({ store: () => store, embed, llm, python: python || fakePython, verifyMeta: async () => null, ...(scholar ? { scholar } : {}) });
+  const service = createService({ store: () => store, embed, llm, python: python || fakePython, verifyMeta, ...(scholar ? { scholar } : {}) });
   const server = http.createServer((req, res) => service.handle(req, res, new URL(req.url, 'http://x'), json).then(done => { if (!done) { res.writeHead(404); res.end(); } }));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = 'http://127.0.0.1:' + server.address().port;
@@ -438,6 +438,22 @@ test('redownload: indirilemeyen kaynaklar tek istekle yeniden indirilir, başar�
   assert.equal((await api('POST', `/collections/${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}/redownload`, {})).status, 404);
 });
 
+test('redownload: sunucu yeniden başlamasıyla yarım kalan makale yeniden indirilir, taranmış PDF denenmez', async t => {
+  const scholar = fakeScholar({ async download() { return Buffer.from(MOTIVATION, 'base64'); } });
+  const env = await setup({ scholar }); t.after(() => env.close());
+  const api = env.client();
+  const { collection } = await api('POST', '/collections', { name: 'Yarım' });
+  await api('POST', `/collections/${collection.id}/import`, { paperIds: [PAPER.paperId] }); await env.service.idle();
+  const raw = require('node:sqlite'), file = require('node:path').join(process.env.WRITER_DATA_DIR, 'writer.db');
+  const poke = error => { const d = new raw.DatabaseSync(file); d.prepare("UPDATE documents SET status = 'error', chunk_count = 0, error = ?").run(error); d.close(); };
+  poke('PDF’de okunabilir metin katmanı yok; taranmış belgeler için önce OCR uygulayın.');
+  assert.equal((await api('POST', `/collections/${collection.id}/redownload`, {})).requested, 0, 'a scan fails the same way again');
+  poke('Sunucu yeniden başladı; işlem yarım kaldı. Yeniden deneyin.');
+  const again = await api('POST', `/collections/${collection.id}/retry-failed`, {});
+  assert.equal(again.status, 202, JSON.stringify(again)); assert.equal(again.downloads, 1); await env.service.idle();
+  assert.equal((await api('GET', `/collections/${collection.id}`)).sources[0].status, 'ready');
+});
+
 test('import: indirmesi başarısız kalan makale yeniden seçilince çift kayıt olmaz', async t => {
   let refuse = true;
   const scholar = fakeScholar({ async download() { if (refuse) throw Error('x: HTTP 429'); return Buffer.from(MOTIVATION, 'base64'); } });
@@ -466,6 +482,33 @@ test('reembed: anahtar kelimeye düşen kaynaklar tek istekle yeniden vektörlen
   assert.equal(view.sources[0].searchMode, 'semantic'); assert.equal(view.sources[0].error, null);
   assert.equal((await api('POST', `/collections/${collection.id}/reembed`, {})).restarted, 0, 'nothing left to embed');
   assert.equal((await api('POST', `/collections/00000000-0000-0000-0000-000000000000/reembed`, {})).status, 404);
+});
+
+test('retry-failed: embedding eksik kaynaklar vektörlenir, doğrulanmamış künyeler yeniden aranır', async t => {
+  let found = false;
+  const env = await setup({ embedBroken: true, verifyMeta: async meta => found ? { ...meta, verified: true, provider: 'Crossref' } : null }); t.after(() => env.close());
+  const api = env.client();
+  const { collection, sources } = await projectWith(api, 'Hatalı', ['m.pdf', MOTIVATION]); await env.service.idle();
+  const raw = require('node:sqlite'), file = require('node:path').join(process.env.WRITER_DATA_DIR, 'writer.db');
+  const d = new raw.DatabaseSync(file); d.prepare("UPDATE documents SET status = 'error', error = 'Sunucu yeniden başladı; işlem yarım kaldı. Yeniden deneyin.' WHERE id = ?").run(sources[0].id); d.close();
+  env.state.embedBroken = false;
+  const result = await api('POST', `/collections/${collection.id}/retry-failed`, {});
+  assert.equal(result.status, 202, JSON.stringify(result)); assert.equal(result.embeddings, 1); assert.equal(result.downloads, 0);
+  assert.equal(result.verifications, 0, 'a source sent to embedding is verified when that finishes');
+  await env.service.idle();
+  let source = (await api('GET', `/collections/${collection.id}`)).sources[0];
+  assert.equal(source.status, 'ready'); assert.equal(source.searchMode, 'semantic'); assert.equal(source.trust, 'unverified');
+  // The automatic lookup after the upload was the first try; the button repeats it once, then the source is no longer counted.
+  const again = await api('POST', `/collections/${collection.id}/retry-failed`, {});
+  assert.equal(again.verifications, 1); assert.equal(again.embeddings, 0); await env.service.idle();
+  assert.equal((await api('POST', `/collections/${collection.id}/retry-failed`, {})).requested, 0, 'two failed lookups: dropped from the count');
+  // The source's own "Dizinlerde doğrula" still works, and a hit verifies it.
+  found = true;
+  assert.equal((await api('POST', `/collections/${collection.id}/sources/${sources[0].id}/verify`, {})).status, 202); await env.service.idle();
+  source = (await api('GET', `/collections/${collection.id}`)).sources[0];
+  assert.equal(source.trust, 'verified'); assert.equal(source.meta.verifyTries, undefined);
+  assert.equal((await api('POST', `/collections/${collection.id}/retry-failed`, {})).requested, 0, 'nothing left to retry');
+  assert.equal((await api('POST', `/collections/00000000-0000-0000-0000-000000000000/retry-failed`, {})).status, 404);
 });
 
 test('sahipsiz kalan "embedding" belgesi süre dolunca yeniden denenebilir duruma döner', async t => {

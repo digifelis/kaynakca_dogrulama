@@ -18,6 +18,9 @@ function useUsage(u){usage={begin:()=>null,...u};}
 // guard(userId, request) throws a plan-limit error: without a request when the monthly token quota is used up; with
 // { references: { total, queried } } when a verification run would pass the reference limits; with { wordDocuments } when the user stores too many documents.
 function useGuard(fn){guard=fn;}
+// The owner's plan must include one of these areas (the first refusal is reported); without accounts there is no plan to check.
+function allow(owner,...features){if(!owner||!guard)return;let refused=null;for(const feature of features){try{guard(owner,{feature});return;}catch(error){refused=refused||error;}}throw refused;}
+const canUse=(owner,feature)=>{try{allow(owner,feature);return true;}catch{return false;}};
 function recordUpload(req,userId,status,error){const u=req.upload;if(!u)return;req.upload=null;try{const now=Date.now();Metrics.defaultMetrics().file({userId,kind:'word-upload',status,bytes:u.bytes,receiveMs:u.receiveMs??now-u.t0,extractMs:u.extractStart?now-u.extractStart:null,totalMs:now-u.t0,error});}catch{/* best effort */}}
 async function body(req){let size=0;const parts=[];for await(const chunk of req){size+=chunk.length;if(size>29*1024*1024)throw Error('Dosya en fazla 20 MB olabilir.');parts.push(chunk);}try{return JSON.parse(Buffer.concat(parts));}catch{throw Error('Geçersiz istek.');}}
 function decode(data){if(typeof data!=='string'||data.length>28*1024*1024||! /^[A-Za-z0-9+/]*={0,2}$/.test(data))throw Error('Geçersiz dosya verisi.');const buffer=Buffer.from(data,'base64');if(buffer.length>20*1024*1024)throw Error('Dosya en fazla 20 MB olabilir.');return buffer;}
@@ -28,8 +31,8 @@ function spans(html,text){
   return result.map(s=>s.text).join('')===text?result:[{text,italic:false}];
 }
 function effectiveParagraphs(s){return s.paragraphs.map(p=>{let text=p.text;const ps=[...s.applied.values()].filter(x=>x.paragraph===p.id).sort((a,b)=>b.start-a.start);for(const patch of ps)text=text.slice(0,patch.start)+patch.replacement+text.slice(patch.end);return {...p,text};});}
-function refPatches(s,r,result){const replacement=result.suggested||result.corrected;return r.paragraphs.map((id,i)=>{
-  const p=s.paragraphs.find(p=>p.id===id);return {paragraph:id,start:0,end:p.text.length,original:p.text,replacement:i?'':replacement,whole:true,spans:i?[{text:'',italic:false}]:spans(result.suggestedHtml||result.correctedHtml,replacement)};
+function refPatches(s,r,result){const prefix=r.prefix||'';const bare=result.suggested||result.corrected;const replacement=prefix+bare;return r.paragraphs.map((id,i)=>{
+  const p=s.paragraphs.find(p=>p.id===id);return {paragraph:id,start:0,end:p.text.length,original:p.text,replacement:i?'':replacement,whole:true,spans:i?[{text:'',italic:false}]:[...(prefix?[{text:prefix,italic:false}]:[]),...spans(result.suggestedHtml||result.correctedHtml,bare)]};
 });}
 // Italic phrases of the formatted suggestion (journal, volume) stay italic wherever they survive the user's edit.
 function italicHtml(html,text){
@@ -50,16 +53,23 @@ function customReference(s,id,text){
 }
 // Patches that are written into the DOCX; report-only acceptances never reach the file.
 function documentPatches(s){return [...s.applied.values()].filter(p=>!p.reportOnly);}
+// The citation style of the document: chosen by the user, or read from a numbered list / numbered citations. Vancouver and IEEE belong to plans with that area.
+function resolveStyle(s){
+  if(!canUse(s.owner,'styles'))return 'apa';
+  if(s.styleAuto===false&&['apa','vancouver','ieee'].includes(s.citationStyle))return s.citationStyle;
+  return Analysis.detectStyle(s.paragraphs,s.references,s.range||{start:-1,end:-1});
+}
 function rebuild(s){
+  s.citationStyle=resolveStyle(s);
   if(s.mode==='content'&&s.checks&&!s.checks.citations&&!s.checks.llm){s.citations=[];s.findings=[];s.effectiveReferences=s.references;s.suggestions=new Map();return;}
 
   const refs=s.references.map(r=>{const accepted=s.appliedGroups.has('bib-'+r.id);const raw=accepted?(s.appliedGroups.get('bib-'+r.id)?.[0]?.replacement||r.raw):r.raw;return {...r,...Analysis.referenceIdentity(raw),effectiveRaw:raw,accepted,confirmed:s.manualConfirmed.has(r.id)};});
-  const base=Analysis.analyze(s.paragraphs,refs,s.range);
+  const base=Analysis.analyze(s.paragraphs,refs,s.range,{style:s.citationStyle});
   s.suggestions=new Map();
   for(const f of base.findings) if(f.patch&&!s.appliedGroups.has(f.id))s.suggestions.set(f.id,[f.patch]);
-  for(const r of s.references){const v=r.verification;if(v?.matched&&(v.suggested||v.corrected)&&!r.protected)s.suggestions.set('bib-'+r.id,refPatches(s,r,v));}
+  for(const r of s.references){const v=Engine.restyle(r.verification,s.citationStyle);if(v?.matched&&(v.suggested||v.corrected)&&!r.protected)s.suggestions.set('bib-'+r.id,refPatches(s,r,v));}
   // Apply corrections to the analysis view as well, while keeping original patch anchors.
-  const effective=Analysis.analyze(effectiveParagraphs(s),refs,s.range);
+  const effective=Analysis.analyze(effectiveParagraphs(s),refs,s.range,{style:s.citationStyle});
   s.citations=base.citations.map(c=>{
     let pos=c.start;
     for(const patch of [...s.applied.values()].filter(p=>p.paragraph===c.paragraph&&p.start<c.start))pos+=patch.replacement.length-(patch.end-patch.start);
@@ -113,10 +123,11 @@ function addDebugEvent(s,event){
   if(event.url)clean.url=safeEventUrl(event.url);s.debugEvents.push(clean);if(s.debugEvents.length>200)s.debugEvents.splice(0,s.debugEvents.length-200);return clean;
 }
 function llmConfigured(){return Content.llmAvailable();}
-function snapshot(s){return {id:s.id,name:s.name,format:s.format||'docx',mode:s.mode||'word',checks:s.checks,checksStarted:s.checksStarted,autoPaused:!!s.autoPaused,revision:s.revision||0,createdAt:s.createdAt,updatedAt:s.updatedAt,pdfFiles:(s.pdfFiles||[]).map(({data,...v})=>v),range:s.range,paragraphs:effectiveParagraphs(s).map(p=>({id:p.id,index:p.index,text:p.text,part:p.part,protected:p.protected,editable:editable(s,p)})),warnings:s.warnings,references:(s.effectiveReferences||s.references).map(r=>({...r,pdf:s.texts[r.id]?{preview:s.texts[r.id].preview,needsConfirmation:s.texts[r.id].needsConfirmation,versionNotice:Content.preprintNotice(s.texts[r.id]),access:s.texts[r.id].access}:null})),citations:s.citations||[],findings:s.mode==='content'&&s.checks?.citations===false?[]:s.findings||[],job:s.job,referenceJob:s.referenceJob,debugEvents:s.debugEvents||[],applied:[...s.appliedGroups].map(([id,patches])=>({id,before:patches.map(p=>p.original).join(' '),after:patches.map(p=>p.replacement).join(' ')})),content:s.content,groqConfigured:llmConfigured(),openrouterConfigured:Content.openRouterEnabled()};}
+function snapshot(s){return {id:s.id,name:s.name,format:s.format||'docx',mode:s.mode||'word',checks:s.checks,checksStarted:s.checksStarted,autoPaused:!!s.autoPaused,revision:s.revision||0,createdAt:s.createdAt,updatedAt:s.updatedAt,pdfFiles:(s.pdfFiles||[]).map(({data,...v})=>v),range:s.range,paragraphs:effectiveParagraphs(s).map(p=>({id:p.id,index:p.index,text:p.text,part:p.part,protected:p.protected,editable:editable(s,p)})),warnings:s.warnings,citationStyle:s.citationStyle||'apa',styleAuto:s.styleAuto!==false,references:(s.effectiveReferences||s.references).map(r=>({...r,verification:r.verification?Engine.restyle(r.verification,s.citationStyle):r.verification,pdf:s.texts[r.id]?{preview:s.texts[r.id].preview,needsConfirmation:s.texts[r.id].needsConfirmation,versionNotice:Content.preprintNotice(s.texts[r.id]),access:s.texts[r.id].access}:null})),citations:s.citations||[],findings:s.mode==='content'&&s.checks?.citations===false?[]:s.findings||[],job:s.job,referenceJob:s.referenceJob,debugEvents:s.debugEvents||[],applied:[...s.appliedGroups].map(([id,patches])=>({id,before:patches.map(p=>p.original).join(' '),after:patches.map(p=>p.replacement).join(' ')})),content:s.content,groqConfigured:llmConfigured(),openrouterConfigured:Content.openRouterEnabled()};}
 function startVerification(s,port,after,scope){
   if(s.job.running)throw Error('Önce devam eden işlemi durdurun.');
   const queried=s.references.filter(r=>!(Verification.reusableResult?.(r.verification))).length;
+  allow(s.owner,'reference');
   if(s.owner&&guard)guard(s.owner,{references:{total:s.references.length,queried}});
   s.worker?.terminate();s.followupContent=false;s.autoContentScope=after?(scope||{}):null;
   const seen=new Set();let released=false,newReady=false;
@@ -136,7 +147,7 @@ function startVerification(s,port,after,scope){
     cachedCount++;return {...hit,raw:r.raw,fromCache:true};
   });
   if(cachedCount)addDebugEvent(s,{scope:'reference',kind:'info',provider:'Önbellek',detail:`${cachedCount} kayıt önceki doğrulamalardan alındı; dizinlere yeniden sorulmadı`});
-  const worker=Verification.start({proxy:`http://127.0.0.1:${port}/api/proxy`,references:s.references.map(r=>r.raw),initialResults,googleBooksConfigured:!!process.env.GOOGLE_BOOKS_API_KEY},{queue:Backend.queue()});s.worker=worker;
+  const worker=Verification.start({proxy:`http://127.0.0.1:${port}/api/proxy`,references:s.references.map(r=>r.raw),initialResults,...(canUse(s.owner,'web')?{}:{options:{web:false}}),googleBooksConfigured:!!process.env.GOOGLE_BOOKS_API_KEY},{queue:Backend.queue()});s.worker=worker;
   const terminate=worker.terminate.bind(worker);worker.terminate=()=>{endOp('cancelled');return terminate();};
   const content=()=>{if(!after&&!s.autoContentScope)return;if(s.job.running){s.followupContent=true;return;}startContent(s,s.autoContentScope||scope).catch(e=>{s.job={running:false,message:e.message};persist(s);});};
   worker.on('message',m=>{
@@ -206,6 +217,7 @@ async function fullText(ref,signal,options){
 }
 async function startContent(s,scope={}){
   if(s.job.running)throw Error('Önce devam eden işlemi durdurun.');
+  allow(s.owner,'content');
   if(!llmConfigured())throw Error(Content.llmMissing());
   if(s.owner&&guard)guard(s.owner);
   s.autoContentScope=scope;const controller=new AbortController();s.controller=controller;const signal=controller.signal;
@@ -284,7 +296,7 @@ async function handle(req,res,url,json){
     if(url.pathname==='/api/word/upload'&&req.method==='POST'){
       req.upload={t0:Date.now(),bytes:0};
       if(user&&guard)guard(user.userId,{wordDocuments:Store.list().filter(d=>d.owner===user.userId).length});
-      const input=await body(req);const format=/\.pdf$/i.test(input.name||'')?'pdf':/\.docx$/i.test(input.name||'')?'docx':'';
+      const input=await body(req);if(user)allow(user.userId,...(input.mode==='content'?['content']:['orphan','reference']));const format=/\.pdf$/i.test(input.name||'')?'pdf':/\.docx$/i.test(input.name||'')?'docx':'';
       if(!format)throw Error('Yalnız Word (.docx) ve PDF desteklenir; .doc/.docm dosyasını Word’de .docx olarak kaydedin.');
       const data=decode(input.data);if(format==='pdf'&&!data.subarray(0,5).equals(Buffer.from('%PDF-')))throw Error('Geçerli PDF değil.');
       req.upload.bytes=data.length;req.upload.receiveMs=Date.now()-req.upload.t0;req.upload.extractStart=Date.now();
@@ -303,6 +315,7 @@ async function handle(req,res,url,json){
     if(req.method==='GET'&&action==='original'){const pdf=s.format==='pdf';res.writeHead(200,{'Content-Type':pdf?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','Content-Disposition':'attachment; filename='+(pdf?'original.pdf':'original.docx')});res.end(s.originalData||s.data);return true;}
     if(req.method==='GET'&&action==='pdfdownload'){const pdf=(s.pdfFiles||[]).find(p=>p.id===url.searchParams.get('file'));if(!pdf)throw Error('PDF bulunamadı.');res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename=source.pdf'});res.end(Buffer.from(pdf.data,'base64'));return true;}
     if(req.method==='GET'&&action==='download'){
+      allow(s.owner,'export');
       if(s.format==='pdf')throw Error(PDF_READ_ONLY);
       const out=await python({operation:'export',data:s.data.toString('base64'),patches:documentPatches(s)});
       res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','Content-Disposition':'attachment; filename="makale_duzeltilmis.docx"','Cache-Control':'no-store'});res.end(Buffer.from(out.data,'base64'));return true;
@@ -333,18 +346,26 @@ async function handle(req,res,url,json){
         if(ref.paragraphs.length<2)throw Error('Bu kayıt tek paragraf; Word’de kayıtları ayrı paragraflara ayırın.');
         replacements=ref.paragraphs.map(id=>{const p=s.paragraphs.find(p=>p.id===id);return {raw:p.text.trim(),paragraphs:[id],protected:p.protected};});s.references.splice(index,1,...replacements);
       }else throw Error('Kayıt ayırma işlemi geçersiz.');
-      s.references=s.references.map((r,i)=>({id:'r'+i,raw:r.raw,paragraphs:r.paragraphs,protected:r.protected,...Analysis.referenceIdentity(r.raw)}));
+      s.references=s.references.map((r,i)=>({id:'r'+i,raw:r.raw,paragraphs:r.paragraphs,protected:r.protected,...(r.number!=null?{number:r.number,prefix:r.prefix,labelForm:r.labelForm}:{}),...Analysis.referenceIdentity(r.raw)}));
       s.applied.clear();s.appliedGroups.clear();s.content={};s.texts={};s.manualMappings.clear();s.contextOverrides.clear();s.manualConfirmed.clear();rebuild(s);
     }
     else if(action==='runchecks'){
       if(s.job.running||s.referenceJob?.running)throw Error('Önce devam eden denetimi durdurun.');
       const checks={references:input.checks?.references===true,citations:input.checks?.citations===true,llm:input.checks?.llm===true};
       if(!Object.values(checks).some(Boolean))throw Error('En az bir denetim seçin.');
+      if(checks.citations)allow(s.owner,'orphan');if(checks.references)allow(s.owner,'reference');if(checks.llm)allow(s.owner,'content');
       if(checks.llm&&!llmConfigured())throw Error(Content.llmMissing());
       s.checks=checks;s.checksStarted=true;rebuild(s);
       if(checks.references)startVerification(s,req.socket.localPort,checks.llm);
       else if(checks.llm)await startContent(s,{});
       else s.job={running:false,kind:'citations',message:'Metin içi atıf kontrolü tamamlandı',completed:s.citations.length,total:s.citations.length};
+    }
+    else if(action==='style'){
+      if(s.job.running||s.referenceJob?.running)throw Error('Önce devam eden denetimi durdurun.');
+      const style=String(input.style||'');if(!['auto','apa','vancouver','ieee'].includes(style))throw Error('Atıf stili otomatik, APA, Vancouver veya IEEE olmalıdır.');
+      if(style==='vancouver'||style==='ieee')allow(s.owner,'styles');
+      s.styleAuto=style==='auto';if(style!=='auto')s.citationStyle=style;
+      s.content={};s.manualMappings.clear();rebuild(s);
     }
     else if(action==='verify'){if(!s.references.length)throw Error('Önce kaynakça bölümünü seçin.');startVerification(s,req.socket.localPort);}
     else if(action==='content'||action==='check'){if(!s.references.length)throw Error('Önce kaynakça bölümünü seçin.');if(action==='check'){if(!llmConfigured())throw Error(Content.llmMissing());if(s.checks?.references!==false&&!s.worker&&scopeNeedsVerification(s,input))startVerification(s,req.socket.localPort,true,input);else await startContent(s,input);}else await startContent(s,input);}

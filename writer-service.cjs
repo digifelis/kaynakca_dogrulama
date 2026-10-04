@@ -84,7 +84,7 @@ function createService(options = {}) {
     const documents = listSwept(userId, () => sourcesOf(userId, projectId)), byId = sourceMap(documents);
     const manuscript = db().getManuscript(userId, projectId);
     return { project, collectionIds: db().projectCollectionIds(userId, projectId), sources: documents.map(documentView), messages: db().listMessages(userId, projectId).map(m => messageView(m, byId)),
-      manuscript: { html: Manuscript.renderCitations(manuscript.html, byId), revision: manuscript.revision, updatedAt: manuscript.updatedAt }, usage: usageOf(userId, plan) };
+      manuscript: { html: Manuscript.renderCitations(manuscript.html, byId, project.citationStyle), revision: manuscript.revision, updatedAt: manuscript.updatedAt }, usage: usageOf(userId, plan) };
   }
 
   // A document that is still "processing"/"embedding" but that no running task owns (the server restarted, a task died) would stay that way for good
@@ -154,7 +154,12 @@ function createService(options = {}) {
         try { found = await deps.verifyMeta(doc.meta, { port }); } catch { /* the guess simply stays unverified */ }
         const fresh = db().getDocument(userId, docId);
         // A correction made by the user while the lookup ran wins over the lookup.
-        if (found && fresh && fresh.meta.source !== 'user') db().updateDocument(userId, docId, { meta: found });
+        if (fresh && fresh.meta.source !== 'user') {
+          // Every lookup that does not verify the künye is counted; after VERIFY_TRIES the bulk retry stops offering the source.
+          const next = { ...(found || fresh.meta) };
+          if (next.verified) delete next.verifyTries; else next.verifyTries = (fresh.meta.verifyTries || 0) + 1;
+          db().updateDocument(userId, docId, { meta: next });
+        }
       } finally { verifyingIds.delete(docId); }
     }));
   }
@@ -206,8 +211,42 @@ function createService(options = {}) {
     track(deps.usage.run({ userId, kind: 'source-embed', detail: { retry: true, collectionId } }, async () => { const controller = new AbortController(); controllers.set(doc.id, controller); try { await stage(embedding, () => finishEmbedding(userId, doc, controller.signal)); } finally { controllers.delete(doc.id); } }).catch(() => {}));
   };
   const keywordOnly = d => d.status === 'ready' && d.searchMode === 'keyword' && d.chunkCount > 0;
-  // A found paper whose PDF could not be downloaded (publisher limits, network): it stays in the collection as an error and can be fetched again.
-  const downloadFailed = d => d.status === 'error' && !!d.meta?.scholarId && /^PDF indirilemedi/.test(d.error || '');
+  // Passages are saved but the embedding is missing: it fell back to keyword search, or the work was cut short and left as an error.
+  const embedRetryable = d => keywordOnly(d) || (d.status === 'error' && d.chunkCount > 0);
+  // A found paper that never got its passages (publisher limits, network, a server restart in the middle): it stays in the collection as an error and can be fetched again.
+  // An unreadable file (scanned PDF without text) would fail the same way again, so it is not offered.
+  const downloadFailed = d => d.status === 'error' && !!d.meta?.scholarId && (/^PDF indirilemedi/.test(d.error || '') || (!d.chunkCount && !/metin katmanı yok|aranabilir metin/.test(d.error || '')));
+  // Redownloads the failed papers of a collection; the body is shared by the redownload and retry-failed routes.
+  async function redownloadFailed(userId, plan, collectionId) {
+    Plans.enforce(plan, 'monthlyTokens', deps.usage.monthTokens(userId));
+    const limits = Plans.limitsFor(plan), failed = db().listDocuments(userId, collectionId).filter(downloadFailed), records = [];
+    try { for (let i = 0; i < failed.length; i += 50) records.push(...await deps.scholar.byIds(failed.slice(i, i + 50).map(d => d.meta.scholarId))); }
+    catch (error) { throw httpError(error.status || 502, error.message || 'Semantic Scholar kaydı alınamadı.'); }
+    const byId = new Map(records.map(r => [r.paperId, r])), skipped = [];
+    let restarted = 0;
+    for (const doc of failed) {
+      const rec = byId.get(doc.meta.scholarId);
+      if (!rec || rec.missing || !rec.pdfUrl) { skipped.push({ paperId: doc.meta.scholarId, title: doc.meta.title || doc.fileName, reason: 'Açık erişimli PDF bulunamadı.' }); continue; }
+      db().updateDocument(userId, doc.id, { status: 'processing', error: null });
+      importPaper(userId, collectionId, doc, rec, limits); restarted++;
+    }
+    if (restarted) db().touchCollection(userId, collectionId);
+    deps.usage.event?.({ userId, kind: 'scholar-import', detail: { retry: true, requested: failed.length, restarted, collectionId } });
+    return { requested: failed.length, restarted, skipped };
+  }
+  // A künye that no index confirmed and the user did not type: the lookup is tried again, up to VERIFY_TRIES lookups in all (needs a title or DOI to search with).
+  const VERIFY_TRIES = 2;
+  const verifyRetryable = d => d.status === 'ready' && (d.meta?.verifyTries || 0) < VERIFY_TRIES && Cite.trust(d.meta) === 'unverified' && d.meta?.source !== 'user' && !!(d.meta?.title || d.meta?.doi) && !verifyingIds.has(d.id);
+  function reverifyAll(userId, collectionId) {
+    const docs = db().listDocuments(userId, collectionId).filter(verifyRetryable);
+    for (const doc of docs) verifyInBackground(userId, doc.id);
+    return { requested: docs.length, restarted: docs.length };
+  }
+  function reembedAll(userId, collectionId) {
+    const docs = listSwept(userId, () => db().listDocuments(userId, collectionId)).filter(embedRetryable);
+    for (const doc of docs) startReembed(userId, collectionId, doc);
+    return { requested: docs.length, restarted: docs.length };
+  }
   const importPaper = (userId, collectionId, doc, rec, limits) => track((async () => {
     const fail = message => { if (db().getDocument(userId, doc.id)) db().updateDocument(userId, doc.id, { status: 'error', error: 'PDF indirilemedi: ' + message }); };
     const key = 'scholar:' + rec.paperId, extraction = Cache.defaultCache().getExtraction(key);
@@ -321,16 +360,22 @@ function createService(options = {}) {
     port = req.socket.localPort || port;
     try {
       if (req.method !== 'GET' && req.headers['x-word-request'] !== '1') return json(res, 403, { error: 'Yerel uygulama isteği gerekli.' }), true;
-      const { userId, plan } = Identity.requireUser(req, res);
+      const { userId, plan, role } = Identity.requireUser(req, res);
       const route = url.pathname.slice('/api/writer'.length).replace(/\/$/, '');
       let m;
+      // Without accounts there are no plans to hold anyone to: every area is open.
+      const open = !Identity.isEnforced(), can = feature => open || Plans.hasFeature(plan, feature, role), need = feature => { if (!open) Plans.requireFeature(plan, feature, role); };
+      // A plan without the writing assistant keeps what is already stored: it can be read and deleted, nothing new can be added or asked.
+      if (req.method !== 'GET' && req.method !== 'DELETE') need('writer');
+      if (route.startsWith('/scholar') || /\/(import|redownload)$/.test(route)) need('scholar');
+      if (/\/manuscript\.docx$/.test(route)) need('export');
 
       if (route === '/bootstrap' && req.method === 'GET') {
         const available = Skills.forPlan(plan).map(Skills.publicView), names = new Set(available.map(s => s.name));
         const locked = Skills.load().skills.filter(s => !names.has(s.name)).map(s => ({ name: s.name, title: s.title, description: s.description, minPlan: Skills.publicView(s).minPlan }));
         return json(res, 200, { plan: { id: Plans.known(plan), title: Plans.get(plan).title, nextPlan: Plans.nextPlan(plan) }, plans: Plans.list().map(p => ({ id: p.id, title: p.title })), usage: usageOf(userId, plan),
           skills: available, lockedSkills: locked, defaultSkill: Skills.DEFAULT_SKILL, collections: db().listCollections(userId),
-          services: { llm: !!deps.llm.llmAvailable(), embedding: !!deps.embed.available(), scholar: true }, projects: db().listProjects(userId) }), true;
+          services: { llm: !!deps.llm.llmAvailable(), embedding: !!deps.embed.available(), scholar: can('scholar') }, features: open ? Plans.FEATURE_IDS : Plans.featuresFor(plan, role), projects: db().listProjects(userId) }), true;
       }
       if (route === '/scholar/search' && req.method === 'GET') {
         throttleSearch(userId);
@@ -374,29 +419,25 @@ function createService(options = {}) {
       if ((m = route.match(/^\/collections\/([0-9a-f-]{36})\/redownload$/)) && req.method === 'POST') {
         const collectionId = m[1];
         if (!db().getCollection(userId, collectionId)) throw httpError(404, 'Koleksiyon bulunamadı.');
-        Plans.enforce(plan, 'monthlyTokens', deps.usage.monthTokens(userId));
-        const limits = Plans.limitsFor(plan), failed = db().listDocuments(userId, collectionId).filter(downloadFailed), records = [];
-        try { for (let i = 0; i < failed.length; i += 50) records.push(...await deps.scholar.byIds(failed.slice(i, i + 50).map(d => d.meta.scholarId))); }
-        catch (error) { throw httpError(error.status || 502, error.message || 'Semantic Scholar kaydı alınamadı.'); }
-        const byId = new Map(records.map(r => [r.paperId, r])), skipped = [];
-        let restarted = 0;
-        for (const doc of failed) {
-          const rec = byId.get(doc.meta.scholarId);
-          if (!rec || rec.missing || !rec.pdfUrl) { skipped.push({ paperId: doc.meta.scholarId, title: doc.meta.title || doc.fileName, reason: 'Açık erişimli PDF bulunamadı.' }); continue; }
-          db().updateDocument(userId, doc.id, { status: 'processing', error: null });
-          importPaper(userId, collectionId, doc, rec, limits); restarted++;
-        }
-        if (restarted) db().touchCollection(userId, collectionId);
-        deps.usage.event?.({ userId, kind: 'scholar-import', detail: { retry: true, requested: failed.length, restarted, collectionId } });
-        return json(res, 202, { requested: failed.length, restarted, skipped }), true;
+        return json(res, 202, await redownloadFailed(userId, plan, collectionId)), true;
       }
-      // Semantic search for every document of the collection that fell back to keyword search (embedding failed or was interrupted).
+      // One button for every failed addition: fetch the PDFs that could not be downloaded, embed what is missing and look up the künye again.
+      if ((m = route.match(/^\/collections\/([0-9a-f-]{36})\/retry-failed$/)) && req.method === 'POST') {
+        const collectionId = m[1];
+        if (!db().getCollection(userId, collectionId)) throw httpError(404, 'Koleksiyon bulunamadı.');
+        // A failing download lookup (Semantic Scholar unreachable, quota) must not keep the embeddings from being retried.
+        let download = { requested: 0, restarted: 0, skipped: [] }, downloadError = '';
+        try { if (can('scholar')) download = await redownloadFailed(userId, plan, collectionId); } catch (error) { downloadError = error.message || 'İndirme başlatılamadı.'; }
+        const embed = reembedAll(userId, collectionId);
+        // Documents just sent to embedding are verified when that finishes; only those already ready are looked up now.
+        const verify = reverifyAll(userId, collectionId);
+        if (downloadError && !embed.restarted && !verify.restarted) throw httpError(502, downloadError);
+        return json(res, 202, { requested: download.requested + embed.requested + verify.requested, downloads: download.restarted, embeddings: embed.restarted, verifications: verify.restarted, skipped: download.skipped, downloadError }), true;
+      }
       if ((m = route.match(/^\/collections\/([0-9a-f-]{36})\/reembed$/)) && req.method === 'POST') {
         const collectionId = m[1];
         if (!db().getCollection(userId, collectionId)) throw httpError(404, 'Koleksiyon bulunamadı.');
-        const docs = listSwept(userId, () => db().listDocuments(userId, collectionId)).filter(keywordOnly);
-        for (const doc of docs) startReembed(userId, collectionId, doc);
-        return json(res, 202, { requested: docs.length, restarted: docs.length }), true;
+        return json(res, 202, reembedAll(userId, collectionId)), true;
       }
       if (route === '/suggest' && req.method === 'GET') return json(res, 200, { skill: Skills.suggest(url.searchParams.get('q') || '', plan) }), true;
       if (route === '/collections' && req.method === 'GET') return json(res, 200, { collections: db().listCollections(userId) }), true;
@@ -475,7 +516,12 @@ function createService(options = {}) {
           if (req.method === 'PATCH') {
             const input = await readBody(req, 16 * 1024);
             if (input.language !== undefined) { if (!['tr', 'en'].includes(input.language)) throw httpError(400, 'Makale dili Türkçe (tr) veya İngilizce (en) olmalıdır.'); db().setProjectLanguage(userId, projectId, input.language); }
-            if (input.title !== undefined || input.language === undefined) db().renameProject(userId, projectId, title(input.title));
+            if (input.citationStyle !== undefined) {
+              if (!['apa', 'vancouver', 'ieee'].includes(input.citationStyle)) throw httpError(400, 'Atıf stili APA, Vancouver veya IEEE olmalıdır.');
+              if (input.citationStyle !== 'apa') need('styles');
+              db().setProjectCitationStyle(userId, projectId, input.citationStyle);
+            }
+            if (input.title !== undefined || (input.language === undefined && input.citationStyle === undefined)) db().renameProject(userId, projectId, title(input.title));
             return json(res, 200, { project: db().getProject(userId, projectId) }), true;
           }
           if (req.method === 'DELETE') { db().deleteProject(userId, projectId); return json(res, 200, { deleted: true }), true; }
@@ -492,7 +538,7 @@ function createService(options = {}) {
         }
         if (part === 'messages' && req.method === 'DELETE') { db().clearMessages(userId, projectId); return json(res, 200, { cleared: true }), true; }
         if (part === 'manuscript') {
-          if (req.method === 'GET') { const ms = db().getManuscript(userId, projectId); return json(res, 200, { html: Manuscript.renderCitations(ms.html, sourceMap(sourcesOf(userId, projectId))), revision: ms.revision, updatedAt: ms.updatedAt }), true; }
+          if (req.method === 'GET') { const ms = db().getManuscript(userId, projectId); return json(res, 200, { html: Manuscript.renderCitations(ms.html, sourceMap(sourcesOf(userId, projectId)), db().getProject(userId, projectId).citationStyle), revision: ms.revision, updatedAt: ms.updatedAt }), true; }
           if (req.method === 'PUT') {
             const input = await readBody(req, 3 * 1024 * 1024);
             const saved = db().saveManuscript(userId, projectId, Manuscript.sanitize(input.html), Number(input.revision) || 0);
@@ -500,7 +546,7 @@ function createService(options = {}) {
           }
         }
         if (part === 'manuscript.docx' && req.method === 'GET') {
-          const blocks = Manuscript.toBlocks(db().getManuscript(userId, projectId).html, sourceMap(sourcesOf(userId, projectId)));
+          const blocks = Manuscript.toBlocks(db().getManuscript(userId, projectId).html, sourceMap(sourcesOf(userId, projectId)), { style: db().getProject(userId, projectId).citationStyle });
           if (!blocks.length) throw httpError(400, 'Makale boş; önce metin ekleyin.');
           const out = await deps.python({ operation: 'build_docx', data: '', blocks });
           res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'Content-Disposition': 'attachment; filename="makale.docx"', 'Cache-Control': 'no-store' });

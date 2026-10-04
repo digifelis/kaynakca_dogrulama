@@ -66,7 +66,7 @@ function fakeProviders({ promptTokens = 120, completionTokens = 30 } = {}) {
   return { calls, restore() { global.fetch = real; } };
 }
 
-async function harness({ ldap = null, startAt = Date.UTC(2026, 9, 3, 12), providers = true, smtp = true } = {}) {
+async function harness({ ldap = null, startAt = Date.UTC(2026, 9, 3, 12), providers = true, smtp = true, openAreas = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'accounts-'));
   process.env.WRITER_DATA_DIR = dir; process.env.WORD_ARCHIVE_DIR = path.join(dir, 'word');
   process.env.GROQ_API_KEY = 'groq-test'; process.env.GEMINI_API_KEY = 'gemini-test'; process.env.GEMINI_EMBEDDING_DIM = '128';
@@ -74,6 +74,8 @@ async function harness({ ldap = null, startAt = Date.UTC(2026, 9, 3, 12), provid
   Identity._reset(); Plans.setProvider(null);
   const clock = { t: startAt }, mailbox = [];
   const app = createApp({ dir, now: () => clock.t, ldapClientFactory: ldap?.factory, publicUrl: 'http://127.0.0.1', transportFactory: () => ({ sendMail: async mail => { mailbox.push(mail); } }) });
+  // The tests that are not about plan areas run with every area open; the area tests narrow a plan themselves.
+  if (openAreas) for (const plan of app.accounts.plans.list()) app.accounts.plans.save({ ...plan, features: Plans.FEATURE_IDS });
   await app.auth.bootstrapAdmin({ log() {} });
   if (smtp) app.auth.settings.saveSmtp({ host: 'smtp.test', port: 587, from: 'Kaynakça <no-reply@test>' });
   wordService.useUsage(app.usage);

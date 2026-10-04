@@ -35,6 +35,7 @@
   const quotaAttempts = new Map();
   let additionalProviders = root.ReferenceProviders || null;
   const web = root.ReferenceWeb || (typeof require === 'function' ? require('./web-reference.js') : null);
+  const styles = root.CitationStyles || (typeof require === 'function' ? require('./citation-styles.js') : null);
   let options = {};
   function configure(settings = {}) {
     options = { ...options, ...settings };
@@ -72,7 +73,7 @@
         continue;
       }
       if (currentIsId && current.length) { records.push(current.join(' ')); current = []; currentIsId = false; }
-      const numbered = /^(?:\[\d+\]|\d+[.)])\s+/.test(trimmed);
+      const numbered = /^(?:\[\d+\]|\(\d+\)|\d+[.)])\s+/.test(trimmed);
       const authorStart = /^(?:(?:van|von|de|der|den)\s+)*[\p{Lu}][\p{L}'’–-]+(?:\s+[\p{L}'’–-]+){0,2},\s*(?:[\p{Lu}]\.|[\p{Lu}][\p{Ll}])/u.test(trimmed);
       const vancouverStart = /^[\p{Lu}][\p{L}'’–-]+\s+[A-Z]{1,4}(?:[,\s]|\.)/u.test(trimmed);
       const datedAuthorStart = /^[^\n]{1,220}?\(\s*(?:(?:19|20)\d{2}[a-z]?(?:\s*[,)]|$)|t\.\s*y\.|n\.\s*d\.)/iu.test(trimmed);
@@ -80,7 +81,7 @@
         records.push(current.join(' '));
         current = [];
       }
-      current.push(trimmed.replace(/^(?:\[\d+\]|\d+[.)])\s+/, ''));
+      current.push(trimmed.replace(/^(?:\[\d+\]|\(\d+\)|\d+[.)])\s+/, ''));
     }
     if (current.length) records.push(current.join(' '));
     return records.filter(Boolean);
@@ -117,6 +118,14 @@
       }
     }
     if (!title) {
+      // IEEE: initials-first authors, then the title in quotation marks: A. Zhang and B. Lee, “Title,” Journal, vol. 1, 2020.
+      const quoted = withoutDoi.match(/[“"]([^”"]{8,}?)[,.]?[”"]/);
+      if (quoted && quoted.index > 0) {
+        title = quoted[1].replace(/[,.]+$/, '').trim();
+        authorText = withoutDoi.slice(0, quoted.index).replace(/[,\s]+$/, '');
+      }
+    }
+    if (!title) {
       // Vancouver: author list. Title. Journal. Year;volume:pages.
       const parts = withoutDoi.split(/\.\s+/);
       if (parts.length > 1) {
@@ -126,7 +135,9 @@
       }
     }
     const authorPrefix = authorText || withoutDoi;
-    const firstAuthor = authorPrefix.includes(',') && !/^[\p{L}'’–-]+\s+[A-Z]{1,4},/u.test(authorPrefix)
+    // IEEE writes initials first ("K. Zhang, M. Lee"): the family name follows them.
+    const initialsFirst = authorPrefix.match(/^(?:\p{Lu}\.[\s-]*)+((?:(?:van|von|de|der|den)\s+)*[\p{Lu}][\p{L}'’–-]+)/u)?.[1];
+    const firstAuthor = initialsFirst ? initialsFirst : authorPrefix.includes(',') && !/^[\p{L}'’–-]+\s+[A-Z]{1,4},/u.test(authorPrefix)
       ? authorPrefix.split(',')[0].trim()
       : authorPrefix.match(/^([\p{L}'’–-]+)\s+[A-Z]{1,4}(?:\s|[,\.])/u)?.[1] || authorPrefix.match(/^([\p{L}'’–-]+)/u)?.[1] || '';
     // Only an identifier was given (DOI, doi.org link, arXiv number or link):
@@ -260,18 +271,20 @@
   // online in December 2022 but belonging to the January 2023 issue is a 2023
   // article), then the work's published-online, published-print, issued and
   // created dates. No date at all stays null and is written as t.y.
-  function crossrefYear(raw) {
+  function crossrefDate(raw) {
     const dates = [raw['journal-issue']?.['published-online'], raw['journal-issue']?.['published-print'],
       raw['published-online'], raw['published-print'], raw.issued, raw.created, raw.published];
-    for (const date of dates) { const year = date?.['date-parts']?.[0]?.[0]; if (year) return year; }
-    return null;
+    for (const date of dates) { const [year, month] = date?.['date-parts']?.[0] || []; if (year) return { year, month: month || null }; }
+    return { year: null, month: null };
   }
+  const crossrefYear = raw => crossrefDate(raw).year;
 
   function fromCrossref(raw) {
     return { title: raw.title?.[0] || '', author: (raw.author || []).map(person => person.family || person.literal || !person.name ? person : { literal: person.name }),
       language: raw.language || '',
-      year: crossrefYear(raw),
-      doi: raw.DOI || '', containerTitle: raw['container-title']?.[0] || '',
+      year: crossrefYear(raw), month: crossrefDate(raw).month,
+      doi: raw.DOI || '', containerTitle: raw['container-title']?.[0] || '', shortContainer: raw['short-container-title']?.[0] || '',
+      place: raw['publisher-location'] || '', edition: raw['edition-number'] || '',
       volume: raw.volume || '', issue: raw.issue || '', pages: raw.page || '',
       publisher: raw.publisher || '', editor: raw.editor || [], type: raw.type || '',
       url: raw.DOI ? `https://doi.org/${raw.DOI}` : raw.URL || '', provider: 'Crossref' };
@@ -437,16 +450,30 @@
     return out;
   }
 
+  // One record in the Vancouver or IEEE style (plain text, italic HTML, notes); APA is formatApa / crossrefApa.
+  function formatStyle(item, style, extra = {}) { return styles.format(item, style, { sentenceCase }, extra); }
+  // The verification result with its suggestion written in `style`. The structured record stays in result.matched, so the style can be
+  // changed at any time without verifying again; a record that was not found (or an APA request) is returned unchanged.
+  function restyle(result, style, extra = {}) {
+    if (!style || style === 'apa' || !result?.matched || !['verified', 'review'].includes(result.status)) return result;
+    const formatted = formatStyle(result.registry ? registryItem(result.matched) : result.matched, style, extra);
+    const verified = result.status === 'verified';
+    return { ...result, style, styleNotes: formatted.notes, corrected: verified ? formatted.text : result.raw, correctedHtml: verified ? formatted.html : null,
+      suggested: formatted.text, suggestedHtml: formatted.html, crossrefApa: null };
+  }
+
   function errorDescription(error) {
     if (error.status === 429) return `${error.provider}: sorgu kotası/hız sınırı (HTTP 429)`;
     if (error.status === 401 || error.status === 403) return `${error.provider}: erişim reddedildi (HTTP ${error.status})`;
     return error.message;
   }
 
-  async function verifyReference(reference, settings = {}) {
+  async function verifyOne(reference, settings = {}) {
     const parsed = parseReference(reference);
     const webInput = parsed.arxiv ? null : web?.parse(reference);
     if (webInput && !getDoi(reference)) {
+      // The caller's plan does not include web source verification: the record is reported as not checked.
+      if (settings.web === false) return web.compare(reference, { state: 'blocked', reason: 'Web kaynağı doğrulaması paketinizde bulunmuyor.' });
       if (!options.proxyUrl) return web.compare(reference, { state: 'blocked', reason: 'Web doğrulaması için yerel sunucuyu node server.cjs ile başlatın.' });
       checkAbort(options.signal);
       const controller = new AbortController();
@@ -533,7 +560,7 @@
     if (parsed.idOnly) {
       const formatted = registryItem(best);
       return { ...routing, raw: reference, status, statusText: 'Doğrulandı', score: best.score,
-        corrected: formatApa(formatted), correctedHtml: formatApaHtml(formatted), suggested: formatApa(formatted), suggestedHtml: formatApaHtml(formatted), crossrefApa: null,
+        registry: true, corrected: formatApa(formatted), correctedHtml: formatApaHtml(formatted), suggested: formatApa(formatted), suggestedHtml: formatApaHtml(formatted), crossrefApa: null,
         matched: best, provider: best.provider, url: best.url, changes: ['Künye kayıt verisinden oluşturuldu'], warnings, sourcesChecked,
         reason: `${best.provider} kaydı ${parsed.arxiv ? 'arXiv numarası' : 'DOI'} ile bulundu; künye kayıt verisinden oluşturuldu.` };
     }
@@ -555,12 +582,15 @@
       reason: status === 'verified' ? 'Başlık, yazar ve mevcut kimlik bilgileri tutarlı bir kayıtla eşleşti.' : `${reasons.join('; ')}. Öneri inceleme için gösterildi; özgün kaynak değiştirilmedi.` };
   }
 
+  // settings.style ('apa' | 'vancouver' | 'ieee') chooses how the corrected record is written.
+  async function verifyReference(reference, settings = {}) { return restyle(await verifyOne(reference, settings), settings.style); }
+
   const waitForRetry = retryAt => waitForQuota('Ek kaynaklar', Math.max(0, retryAt - Date.now()), 1, options.signal, options.onRetry);
   function getPendingRetryAt(result) {
     if (!result.pendingProviders?.length) return result.pendingRetryAt;
     return Math.min(...result.pendingProviders.map(item => quotaUntil.get(item.provider) || item.retryAt));
   }
-  const engine = { configure, normalizeTitle, splitReferences, getDoi, parseReference, titleScore, rankCandidate, sentenceCase, formatApa, formatApaHtml, verifyReference, requestJson, waitForRetry, getPendingRetryAt };
+  const engine = { configure, normalizeTitle, splitReferences, getDoi, parseReference, titleScore, rankCandidate, sentenceCase, formatApa, formatApaHtml, formatStyle, restyle, verifyReference, requestJson, waitForRetry, getPendingRetryAt };
   if (typeof module !== 'undefined' && module.exports) module.exports = engine;
   else root.ReferenceEngine = engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

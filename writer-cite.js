@@ -3,6 +3,8 @@
    the visible APA 7 author–year text is always rendered from the source's current bibliographic data.
    So correcting a source's data updates every citation and the reference list. */
 (function (root) {
+  const Styles = root.CitationStyles || (typeof require === 'function' ? require('./citation-styles.js') : null);
+  const Engine = root.ReferenceEngine || (typeof require === 'function' ? require('./reference-engine.js') : null);
   const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
   const INITIAL = /^\p{Lu}\.?$|^(?:\p{Lu}\.){1,3}$/u;
@@ -60,8 +62,25 @@
     const year = clean(meta.year) || (language(lang) === 'tr' ? 't.y.' : 'n.d.');
     return { text: `${author}, ${year}${page ? ', ' + page : ''}`, incomplete: false, sortKey: author.toLocaleLowerCase() };
   }
+  // Numbered styles (Vancouver, IEEE) number the sources in the order they are first cited in the manuscript.
+  const isNumeric = style => !!Styles && Styles.isNumeric(style);
+  const numbering = docIds => { const numbers = new Map(); for (const id of docIds) if (!numbers.has(id)) numbers.set(id, numbers.size + 1); return numbers; };
+  // ctx = { style, numbers } for a numbered style; null (author–year) otherwise.
+  const styleContext = (style, docIds) => isNumeric(style) ? { style, numbers: numbering(docIds) } : null;
+  function numberedGroup(refs, sourcesById, lang, ctx) {
+    const byDoc = new Map();
+    for (const ref of refs) { if (!byDoc.has(ref.docId)) byDoc.set(ref.docId, []); byDoc.get(ref.docId).push(ref.page); }
+    const known = [...byDoc].filter(([docId]) => sourcesById[docId] && ctx.numbers.has(docId)), missing = byDoc.size - known.length;
+    const pages = known.length === 1 ? [...new Set(byDoc.get(known[0][0]).map(Number).filter(page => Number.isInteger(page) && page > 0))].sort((a, b) => a - b) : [];
+    const locator = pages.length ? (language(lang) === 'tr' ? (pages.length > 1 ? 'ss. ' : 's. ') : (pages.length > 1 ? 'pp. ' : 'p. ')) + pages.join(', ') : '';
+    const text = Styles.citationGroup(ctx.style, known.map(([docId]) => ctx.numbers.get(docId)), { locator });
+    const gone = missing ? (language(lang) === 'tr' ? '[silinmiş kaynak]' : '[deleted source]') : '';
+    return { text: [text, gone].filter(Boolean).join(' '), incomplete: missing > 0 || known.some(([docId]) => !authorLabel(sourcesById[docId].meta, lang)) };
+  }
   // refs: [{ docId, page }]; the same source's pages are merged, groups are ordered alphabetically (APA 7).
-  function renderGroup(refs, sourcesById, lang) {
+  // With a numbered-style context the group is written as its numbers: [1], [1-3,5] / [1], [3]–[5].
+  function renderGroup(refs, sourcesById, lang, ctx) {
+    if (ctx) return numberedGroup(refs, sourcesById, lang, ctx);
     const byDoc = new Map();
     for (const ref of refs) { if (!byDoc.has(ref.docId)) byDoc.set(ref.docId, []); byDoc.get(ref.docId).push(ref.page); }
     const labels = [...byDoc].map(([docId, pages]) => sourceLabel(sourcesById[docId], pages, lang)).sort((a, b) => a.sortKey.localeCompare(b.sortKey, 'tr'));
@@ -73,13 +92,21 @@
   const formatRefs = refs => refs.map(ref => ref.docId + '@' + (ref.page || '')).join('|');
   const TOKEN = /\{\{c:([^}]+)\}\}/g;
   const tokenFor = refs => `{{c:${formatRefs(refs)}}}`;
-  function renderText(raw, sourcesById, lang) {
-    return String(raw || '').replace(TOKEN, (_, value) => renderGroup(parseRefs(value), sourcesById, lang).text);
+  function renderText(raw, sourcesById, lang, ctx) {
+    return String(raw || '').replace(TOKEN, (_, value) => renderGroup(parseRefs(value), sourcesById, lang, ctx).text);
   }
   const tokenRefs = raw => [...String(raw || '').matchAll(TOKEN)].flatMap(match => parseRefs(match[1]));
 
-  // The APA 7 reference list entry; a verified record's own formatting wins until the user edits the data.
-  function referenceEntry(source) {
+  // The record the numbered styles format: the künye fields of a source (the verified record's extra fields are kept in meta).
+  function metaItem(source) {
+    const meta = source?.meta || {};
+    return { author: (meta.authors || []).map(parseName).filter(Boolean), title: clean(meta.title) || fileLabel(source), year: clean(meta.year), month: meta.month || null, doi: clean(meta.doi),
+      containerTitle: clean(meta.journal), shortContainer: clean(meta.shortContainer), volume: clean(meta.volume), issue: clean(meta.issue), pages: clean(meta.pages),
+      publisher: clean(meta.publisher), place: clean(meta.place), edition: clean(meta.edition), type: meta.type || (meta.journal ? 'journal-article' : meta.publisher ? 'book' : ''), language: meta.language || '' };
+  }
+  // The reference list entry in `style`: APA 7 (a verified record's own formatting wins until the user edits the data), Vancouver or IEEE.
+  function referenceEntry(source, style) {
+    if (isNumeric(style)) { const formatted = Styles.format(metaItem(source), style, { sentenceCase: Engine?.sentenceCase }); return { text: formatted.text, html: formatted.html, notes: formatted.notes }; }
     const meta = source?.meta || {};
     if (meta.apa && meta.apaHtml) return { text: meta.apa, html: meta.apaHtml };
     const list = names(meta).map(bibliographyName);
@@ -104,7 +131,7 @@
   // Trust level shown next to every source: verified by an index, confirmed by the user, or still unchecked.
   const trust = meta => meta?.verified ? 'verified' : meta?.confirmed ? 'confirmed' : 'unverified';
 
-  const api = { parseName, authorLabel, pageLabel, sourceLabel, renderGroup, renderText, parseRefs, formatRefs, tokenFor, tokenRefs, referenceEntry, trust, escapeHtml, TOKEN, familyOf: meta => names(meta).map(familyOf) };
+  const api = { isNumeric, numbering, styleContext, parseName, authorLabel, pageLabel, sourceLabel, renderGroup, renderText, parseRefs, formatRefs, tokenFor, tokenRefs, referenceEntry, trust, escapeHtml, TOKEN, familyOf: meta => names(meta).map(familyOf) };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WriterCite = api;
 })(typeof self !== 'undefined' ? self : this);

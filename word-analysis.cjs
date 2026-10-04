@@ -1,4 +1,5 @@
 const Engine = require('./reference-engine.js');
+const Numeric = require('./word-numeric.cjs');
 const norm = Engine.normalizeTitle;
 const YEAR = '(?:(?:18|19|20)\\d{2}[a-z]?|t\\.\\s*y\\.(?:-\\d+)?|n\\.\\s*d\\.(?:-\\d+)?)';
 const yearPattern = new RegExp(YEAR, 'gi');
@@ -62,6 +63,8 @@ function initialsFirstAuthors(prefix) {
   return names.length ? names : null;
 }
 function referenceIdentity(raw) {
+  // A typed list number ("1. ", "[1] ") belongs to the numbering, not to the author or the title.
+  raw = Numeric.splitLabel(raw).body;
   // Prefer the publication date in parentheses; initials such as Bui, N. D. Q.
   // must not be mistaken for the undated marker n.d.
   const date = new RegExp('\\(\\s*('+YEAR+')(?=\\s*[,)])','i').exec(raw);
@@ -87,7 +90,7 @@ function extractReferences(paragraphs, range) {
     // Each explicit Word paragraph/line break starts a reference. Visual wrapping
     // does not introduce a newline in the extracted paragraph text.
     const lines=p.text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
-    for(const raw of lines)refs.push({id:'r'+refs.length,raw,paragraphs:[p.id],protected:p.protected||lines.length>1});
+    for(const line of lines){const label=Numeric.splitLabel(line);refs.push({id:'r'+refs.length,raw:label.body,paragraphs:[p.id],protected:p.protected||lines.length>1,...(label.number!=null?{number:label.number,prefix:label.prefix,labelForm:label.form}:{})});}
   }
   refs.forEach(r => Object.assign(r, referenceIdentity(r.raw)));
   return { references: refs, range: { start, end }, headings: headings.map(p => p.index), needsRange: start < 0 || !refs.length };
@@ -170,17 +173,21 @@ function distance(a,b) {
   for(let i=1;i<=a.length;i++) for(let j=1;j<=b.length;j++) rows[i][j]=Math.min(rows[i-1][j]+1,rows[i][j-1]+1,rows[i-1][j-1]+(a[i-1]!==b[j-1]));
   return rows[a.length][b.length];
 }
-function analyze(paragraphs, references, range) {
+// options.style: 'apa' (author–year, the default), 'vancouver' or 'ieee' (numbered citations).
+function analyze(paragraphs, references, range, options = {}) {
+  const numeric = Numeric.isNumeric(options.style);
   const citations = [], findings = [], matched = new Set(), history = new Map();
   for (const p of paragraphs) {
     if (p.part === 'word/document.xml' && p.index >= range.start && p.index <= range.end) continue;
     if (heading(p)) { history.set(p.group, []); continue; }
     const ss = sentences(p.text); const preceding = history.get(p.group) || [];
-    for (const c of citationsIn(p, references)) {
+    for (const c of (numeric ? Numeric.citationsIn(p) : citationsIn(p, references))) {
       const sentence = Math.max(0, ss.findIndex(s=>c.start>=s.start && c.start<s.end));
       c.sentence = ss[sentence]?.text || p.text;
       c.context = [...preceding, ...ss.slice(0,sentence+1).map(s=>s.text)].slice(-4);
       c.location = `${p.part === 'word/document.xml' ? 'Ana metin' : p.part.includes('footnotes') ? 'Dipnot' : 'Sonnot'} · paragraf ${p.index+1}`;
+      if (numeric) { if (Numeric.match(c, references)) matched.add(c.reference); }
+      else {
       // An institution name may itself contain "ve"/"and" ("Afet ve Acil Durum Yönetimi
       // Başkanlığı"): when the whole text names a record, it is one author, not a list.
       const whole = nameKey(c.authorText);
@@ -213,12 +220,14 @@ function analyze(paragraphs, references, range) {
           c.patch={paragraph:p.id,start:c.authorStart,end:c.authorEnd,original:c.authorText,replacement:ref.authors.length>2?ref.author+(isTurkish(p.text)?' ve ark.':' et al.'):ref.authors.join(' & ')};
         }
       }
+      }
       if(c.protected) { delete c.patch; c.issue=(c.issue ? c.issue+' · ' : '')+'Alan kodu/korunan öğe: yalnız raporlama.'; }
       if(c.issue) findings.push({id:c.id,type:c.issue,citation:c.id,paragraph:c.paragraph,reference:c.reference||c.candidate,location:c.location,original:c.text,patch:c.patch,reviewReason:c.reviewReason});
       citations.push(c);
     }
     history.set(p.group,[...preceding,...ss.map(s=>s.text)].slice(-3));
   }
+  if (numeric) findings.push(...Numeric.numberingFindings(citations, references, options.style), ...Numeric.styleFindings(references, options.style));
   for(const r of references) {
     if(!matched.has(r.id)) findings.push({id:'orphan-'+r.id,type:'Taranan metinde atıfı bulunmayan kaynak',reference:r.id,original:r.raw});
     const keys=publicationKeys(r.effectiveRaw||r.raw);
@@ -233,4 +242,6 @@ function isTurkish(text) {
  const en=words.filter(w=>['the','a','and','of','in','to','for','is','this','with','study','according'].includes(w)).length;
  return tr>en || (tr===en && /[çğıöşü]/i.test(text));
 }
-module.exports={isTurkish,extractReferences,referenceIdentity,citationsIn,analyze,sentences,publicationKeys};
+// The style a document is written in: 'apa', 'vancouver' or 'ieee' (from a numbered list or numbered citations).
+const detectStyle=(paragraphs,references,range)=>Numeric.detectStyle(paragraphs,references,range,p=>citationsIn(p,references).length);
+module.exports={detectStyle,isTurkish,extractReferences,referenceIdentity,citationsIn,analyze,sentences,publicationKeys};

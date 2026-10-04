@@ -16,7 +16,8 @@ function createAuthService({ auth, usage = null, trustProxy = process.env.TRUST_
   function usageView(user) {
     const plan = Plans.get(user.plan), next = Plans.nextPlan(user.plan);
     const summary = usage?.summary?.(user.id) || null;
-    return { plan: { id: plan.id, title: plan.title, description: plan.description, limits: Plans.limitsFor(plan.id), nextPlan: next ? { id: next, title: Plans.get(next).title, limits: Plans.limitsFor(next) } : null },
+    return { plan: { id: plan.id, title: plan.title, description: plan.description, limits: Plans.limitsFor(plan.id), features: Plans.featuresFor(plan.id, user.role), featureCatalog: Plans.FEATURES,
+      upgrades: Object.fromEntries(Plans.FEATURE_IDS.filter(id => !Plans.hasFeature(plan.id, id, user.role)).map(id => [id, Plans.planWithFeature(plan.id, id) ? Plans.get(Plans.planWithFeature(plan.id, id)).title : null])), nextPlan: next ? { id: next, title: Plans.get(next).title, limits: Plans.limitsFor(next) } : null },
       planExpiresAt: user.planExpiresAt, usage: summary, monthTokens: summary?.month.totalTokens ?? 0, monthReferences: usage?.monthReferences?.(user.id) ?? 0 };
   }
 

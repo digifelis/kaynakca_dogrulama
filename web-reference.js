@@ -82,7 +82,7 @@
       reason: verified ? 'Sayfa başlığı, yazar ve yayın tarihi girişle uyumlu. İçerik iddiaları değerlendirilmedi.' : 'Sayfa bulundu; eksik veya farklı alanları kanıtlarıyla inceleyin. Özgün kaynak korundu. ' + (page.conflicts || []).join('; '),
       corrected: verified ? proposal.text : reference, correctedHtml: verified ? proposal.html : null,
       suggested: proposal.text, suggestedHtml: proposal.html,
-      matched: usable ? { type: 'web', title: page.title, author: page.authors.map(a => ({ literal: a.name })), year: d.year, url: page.url, doi: '', provider: 'Web sayfası', webCitation: proposal } : null,
+      matched: usable ? { type: 'web', title: page.title, author: page.authors.map(a => ({ literal: a.name, ...(a.type === 'Organization' ? { organization: true } : {}) })), year: d.year, month: d.month || null, site: page.site || '', url: page.url, doi: '', provider: 'Web sayfası', webCitation: proposal } : null,
       changes: [...rows.filter(r => !r.matches).map(r => r.field + (r.found ? ' farklı' : ' bulunamadı')), ...(!page.site ? ['Site adı bulunamadı'] : []), ...(page.authorFallback ? ['Kişi yazarı bulunamadı; site adı kullanıldı'] : [])], webFields: rows,
       url: page.url, webPublished: page.published, webModified: page.modified, webCanonical: page.canonical,
       webAuthorFallback: !!page.authorFallback, webRetryAt: page.groqRetryAt || base.webRetryAt, staleAccess,

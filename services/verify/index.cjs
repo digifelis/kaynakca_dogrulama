@@ -25,7 +25,7 @@ function validateFullText(payload) {
 }
 function validate(payload) {
   if (typeof payload?.reference !== 'string' || !payload.reference.trim() || payload.reference.length > 8000) throw Error('Geçersiz kaynak kaydı');
-  return { reference: payload.reference, options: payload.options?.primaryOnly ? { primaryOnly: true } : {} };
+  return { reference: payload.reference, options: { ...(payload.options?.primaryOnly ? { primaryOnly: true } : {}), ...(payload.options?.web === false ? { web: false } : {}) } };
 }
 
 function internalProxy(inspectWeb) {

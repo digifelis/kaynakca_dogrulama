@@ -95,7 +95,15 @@
 
   // ---- rendering
   function renderLanguage() { if (S.data) $('language').value = S.data.project.language === 'en' ? 'en' : 'tr'; }
-  function renderAll() { renderLanguage(); renderPicker(); renderMessages(); refreshCitations(); renderBibliography(); renderUsage(); }
+  // The citation style of the manuscript (APA 7, Vancouver or IEEE); Vancouver and IEEE belong to plans with that area.
+  const styleOf = () => S.data?.project?.citationStyle || 'apa';
+  function renderStyle() {
+    if (!S.data) return;
+    const allowed = !window.Auth?.hasFeature || window.Auth.hasFeature('styles'), select = $('citation-style');
+    for (const option of select.options) if (option.value !== 'apa') { option.disabled = !allowed; option.textContent = (option.value === 'ieee' ? 'IEEE' : 'Vancouver') + (allowed ? '' : ' (paketinizde yok)'); }
+    select.value = styleOf();
+  }
+  function renderAll() { renderLanguage(); renderStyle(); renderPicker(); renderMessages(); refreshCitations(); renderBibliography(); renderUsage(); }
   function renderUsage() {
     if (!S.data) return;
     S.boot.usage = S.data.usage; renderPlan();
@@ -117,6 +125,14 @@
     if (source.status === 'error') return source.error || 'İşlenemedi.';
     return `Hazır · ${source.chunkCount} parça${source.pageCount ? ' · ' + source.pageCount + ' sayfa' : ''} · ${source.searchMode === 'semantic' ? 'anlamsal arama' : 'anahtar kelime araması'}`;
   }
+  // Whether the source's passages went through embedding: a node-graph icon, struck through when only keyword search works.
+  function embedIcon(source) {
+    if (source.status !== 'ready' || !source.chunkCount) return '';
+    const done = source.searchMode === 'semantic';
+    const label = done ? `Embedding var: anlamsal arama kullanılabilir (${source.embeddedCount}/${source.chunkCount} parça)`
+      : `Embedding yok: yalnız anahtar kelime araması (${source.embeddedCount || 0}/${source.chunkCount} parça)`;
+    return `<span class="wr-embed wr-${done ? 'ok' : 'warn'}" role="img" aria-label="${esc(label)}" title="${esc(label)}"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="3.5" cy="8" r="1.7"/><circle cx="12.5" cy="3.5" r="1.7"/><circle cx="12.5" cy="12.5" r="1.7"/><path d="M5 7.2l6-2.9M5 8.8l6 2.9"/>${done ? '' : '<path d="M1.5 14.5l13-13" stroke-width="1.8"/>'}</svg></span>`;
+  }
   function sourceCard(source) {
     // A badge only for künye the user or an index confirmed; an unconfirmed künye is never demanded.
     const [trustText, trustKind] = TRUST[source.trust] || TRUST.unverified, meta = source.meta || {};
@@ -124,8 +140,8 @@
     const field = (name, label, value, area) => `<label class="wr-field">${label}${area ? `<textarea name="${name}" rows="3">${esc(value)}</textarea>` : `<input name="${name}" type="text" value="${esc(value)}">`}</label>`;
     const work = sourceWork(source);
     const warn = source.status === 'ready' && source.error ? `<p class="wr-muted wr-warn-text">${esc(source.error)}</p>` : '';
-    return `<article class="wr-source" data-id="${esc(source.id)}">
-      <div class="wr-source-head"><strong>${esc(meta.title || source.fileName)}</strong>${badge}</div>
+    return `<article class="wr-source${source.status === 'error' ? ' wr-source-error' : ''}" data-id="${esc(source.id)}">
+      <div class="wr-source-head"><strong>${esc(meta.title || source.fileName)}</strong><span class="wr-source-flags">${embedIcon(source)}${badge}</span></div>
       <p class="wr-muted">${esc(source.fileName)}${['processing', 'embedding'].includes(source.status) ? '' : ' — ' + esc(sourceStatus(source))}</p>${work ? `<p class="wr-work" role="status">${spinner(work)}<span>${esc(work)}</span></p>` : ''}${warn}
       <p class="wr-ref">${esc(source.reference || '')}</p>
       <details><summary>Künyeyi düzenle (isteğe bağlı)</summary><form class="wr-meta" data-id="${esc(source.id)}">
@@ -135,23 +151,41 @@
         <div class="wr-row">${field('volume', 'Cilt', meta.volume || '')}${field('issue', 'Sayı', meta.issue || '')}${field('pages', 'Sayfa', meta.pages || '')}</div>
         <div class="wr-row"><button class="copy-button btn-primary" type="submit">Kaydet ve onayla</button><button class="text-button btn-quiet" type="button" data-action="verify"${source.verifying ? ' disabled' : ''}>${source.verifying ? spinner('Aranıyor') + ' ' : ''}Dizinlerde doğrula</button></div>
       </form></details>
-      <div class="wr-row">${source.status === 'ready' && source.searchMode === 'keyword' && source.chunkCount ? '<button class="text-button btn-quiet" type="button" data-action="retry">Anlamsal aramayı yeniden dene</button>' : ''}<button class="text-button btn-danger" type="button" data-action="delete">Kaynağı sil</button></div>
+      <div class="wr-row">${embedRetryable(source) ? '<button class="text-button btn-quiet" type="button" data-action="retry">Anlamsal aramayı yeniden dene</button>' : ''}<button class="text-button btn-danger" type="button" data-action="delete">Kaynağı sil</button></div>
     </article>`;
   }
   // Papers found through the search whose PDF could not be downloaded: one button fetches them all again.
-  const downloadFailed = source => source.status === 'error' && !!source.meta?.scholarId && /^PDF indirilemedi/.test(source.error || '');
-  // Sources that fell back to keyword search (embedding failed or was interrupted): one button embeds them all again.
-  const keywordOnly = source => source.status === 'ready' && source.searchMode === 'keyword' && source.chunkCount > 0;
+  const downloadFailed = source => source.status === 'error' && !!source.meta?.scholarId && (/^PDF indirilemedi/.test(source.error || '') || (!source.chunkCount && !/metin katmanı yok|aranabilir metin/.test(source.error || '')));
+  // Passages saved but embedding missing (fell back to keyword search, or cut short by a server restart).
+  const embedRetryable = source => (source.status === 'ready' && source.searchMode === 'keyword' && source.chunkCount > 0) || (source.status === 'error' && source.chunkCount > 0);
+  // A künye nobody confirmed and the user did not type; its lookup is repeated by the same button.
+  const VERIFY_TRIES = 2;
+  const verifyRetryable = source => source.status === 'ready' && (source.meta?.verifyTries || 0) < VERIFY_TRIES && source.trust === 'unverified' && source.meta?.source !== 'user' && !!(source.meta?.title || source.meta?.doi) && !source.verifying;
+  // One button for every failed addition: it downloads the missing PDFs again, sends everything unembedded to embedding and looks the künye up again.
   function renderFailedBar() {
-    const sources = S.coll?.sources || [], failed = sources.filter(downloadFailed).length, keyword = sources.filter(keywordOnly).length;
-    $('failed-bar').hidden = !failed && !keyword;
-    $('redownload').hidden = !failed; $('reembed').hidden = !keyword;
-    $('failed-note').textContent = [failed ? `${failed} kaynağın PDF’i indirilemedi (site istek sınırı ya da bağlantı sorunu olabilir).` : '', keyword ? `${keyword} kaynak yalnız anahtar kelimeyle aranıyor (embedding alınamamış).` : ''].filter(Boolean).join(' ');
-    if (failed) $('redownload').textContent = `İndirilemeyenleri yeniden indir (${failed})`;
-    if (keyword) $('reembed').textContent = `Anlamsal aramayı yeniden dene (${keyword})`;
+    const sources = S.coll?.sources || [], failed = sources.filter(downloadFailed).length, keyword = sources.filter(embedRetryable).length, unverified = sources.filter(verifyRetryable).length, total = failed + keyword + unverified;
+    $('failed-bar').hidden = !total;
+    $('retry-failed').hidden = !total;
+    $('failed-note').textContent = [failed ? `${failed} kaynağın PDF’i indirilemedi (site istek sınırı ya da bağlantı sorunu olabilir).` : '', keyword ? `${keyword} kaynak yalnız anahtar kelimeyle aranıyor (embedding alınamamış).` : '', unverified ? `${unverified} kaynağın künyesi doğrulanamadı.` : ''].filter(Boolean).join(' ');
+    $('retry-failed').textContent = `Hatalı eklemeleri yeniden dene (${total})`;
+  }
+  // Overall progress of the collection's sources: reading, embedding (by passage) and the künye lookup each count towards "ready".
+  function renderProgress() {
+    const sources = (S.coll?.sources || []).filter(source => source.status !== 'error'), total = sources.length;
+    const working = sources.filter(source => source.status !== 'ready' || source.verifying).length;
+    $('progress').hidden = !total || !working;
+    if ($('progress').hidden) return;
+    const unit = source => source.status === 'processing' ? .05
+      : source.status === 'embedding' ? .1 + .8 * (source.chunkCount ? Math.min(1, source.embeddedCount / source.chunkCount) : 0)
+      : source.verifying ? .9 : 1;
+    const percent = Math.round(100 * sources.reduce((sum, source) => sum + unit(source), 0) / total);
+    $('progress-fill').style.width = percent + '%';
+    $('progress-bar').setAttribute('aria-valuenow', String(percent));
+    $('progress-label').textContent = `${total - working} / ${total} kaynak hazır · ${working} kaynak hazırlanıyor`;
+    $('progress-value').textContent = percent + '%';
   }
   function renderSources() {
-    renderFailedBar();
+    renderFailedBar(); renderProgress();
     const sources = S.coll?.sources || [], sig = JSON.stringify(sources);
     if (sig === S.sourcesSig) return;
     // Typing in a künye form is never wiped by a refresh; the render is retried when the field loses focus.
@@ -170,10 +204,10 @@
       return;
     }
     box.innerHTML = S.collections.map(item => `<label class="wr-chip${chosen.has(item.id) ? ' wr-chip-on' : ''}"><input type="checkbox" value="${esc(item.id)}"${chosen.has(item.id) ? ' checked' : ''}><span class="wr-chip-name">${esc(item.name)}</span><span class="wr-chip-meta">${esc(countText(item.documents, 'kaynak'))}</span></label>`).join('');
-    const sources = S.data?.sources || [], ready = sources.filter(source => source.status === 'ready').length, working = sources.filter(source => ['processing', 'embedding'].includes(source.status) || source.verifying).length;
+    const sources = S.data?.sources || [], ready = sources.filter(source => source.status === 'ready').length, errored = sources.filter(source => source.status === 'error').length, working = sources.filter(source => ['processing', 'embedding'].includes(source.status) || source.verifying).length;
     $('picker-hint').dataset.busy = working ? '1' : '';
     $('picker-hint').textContent = !chosen.size ? 'Soru sorabilmek için en az bir koleksiyon seçin; birden fazla seçebilirsiniz.'
-      : `${chosen.size} koleksiyon seçili · ${ready} kaynak hazır${working ? ` · ${working} kaynak hazırlanıyor` : ''}. Seçimi kaldırırsanız o kaynaklara yapılan atıflar “silinmiş kaynak” görünür.`;
+      : `${chosen.size} koleksiyon seçili · ${ready} kaynak hazır${working ? ` · ${working} kaynak hazırlanıyor` : ''}${errored ? ` · ${errored} kaynak hatalı (Kaynak koleksiyonları sayfasında yeniden deneyebilirsiniz)` : ''}. Seçimi kaldırırsanız o kaynaklara yapılan atıflar “silinmiş kaynak” görünür.`;
   }
   function renderCollectionList() {
     $('collections-count').textContent = S.collections.length || '';
@@ -257,8 +291,16 @@
   }
 
   // ---- editor
+  // Numbered styles number the sources in the order they are first cited in the editor (plus the citation about to be inserted).
+  function editorDocIds(extra = '') {
+    const ids = [];
+    for (const span of $('editor').querySelectorAll('span.cite')) for (const ref of Cite.parseRefs(span.dataset.cite)) if (!ids.includes(ref.docId)) ids.push(ref.docId);
+    for (const ref of Cite.parseRefs(extra)) if (!ids.includes(ref.docId)) ids.push(ref.docId);
+    return ids;
+  }
+  const citeContext = extra => Cite.styleContext(styleOf(), editorDocIds(extra));
   function citeSpan(refs, lang) {
-    return `<span class="cite" data-cite="${esc(refs)}" data-lang="${lang === 'en' ? 'en' : 'tr'}" contenteditable="false">${esc(Cite.renderGroup(Cite.parseRefs(refs), sourcesById(), lang).text)}</span>`;
+    return `<span class="cite" data-cite="${esc(refs)}" data-lang="${lang === 'en' ? 'en' : 'tr'}" contenteditable="false">${esc(Cite.renderGroup(Cite.parseRefs(refs), sourcesById(), lang, citeContext(refs)).text)}</span>`;
   }
   function answerHtml(message) {
     return String(message.raw).split(/\n{2,}/).map(block => block.trim()).filter(Boolean)
@@ -273,22 +315,28 @@
     editor.focus(); changed();
   }
   function refreshCitations() {
-    const byId = sourcesById();
+    const byId = sourcesById(), ctx = citeContext();
     for (const span of $('editor').querySelectorAll('span.cite')) {
-      const text = Cite.renderGroup(Cite.parseRefs(span.dataset.cite), byId, span.dataset.lang).text;
+      const text = Cite.renderGroup(Cite.parseRefs(span.dataset.cite), byId, span.dataset.lang, ctx).text;
       if (text && span.textContent !== text) span.textContent = text;
     }
   }
+  // The reference list entries of the cited sources: alphabetical in APA 7; in citation order, numbered, in Vancouver and IEEE.
+  function bibliographyEntries() {
+    const byId = sourcesById(), style = styleOf(), numbered = Cite.isNumeric(style);
+    const entries = editorDocIds().map(id => byId[id]).filter(Boolean).map((source, index) => {
+      const entry = Cite.referenceEntry(source, style), prefix = !numbered ? '' : style === 'ieee' ? `[${index + 1}] ` : `${index + 1}. `;
+      return { source, entry: { text: prefix + entry.text, html: esc(prefix) + entry.html, notes: entry.notes || [] } };
+    });
+    return numbered ? entries : entries.sort((a, b) => a.entry.text.localeCompare(b.entry.text, 'tr'));
+  }
   function renderBibliography() {
-    const byId = sourcesById(), ids = [];
-    for (const span of $('editor').querySelectorAll('span.cite')) for (const ref of Cite.parseRefs(span.dataset.cite)) if (!ids.includes(ref.docId)) ids.push(ref.docId);
-    const entries = ids.map(id => byId[id]).filter(Boolean).map(source => ({ source, entry: Cite.referenceEntry(source) })).sort((a, b) => a.entry.text.localeCompare(b.entry.text, 'tr'));
+    const entries = bibliographyEntries();
     $('bib-count').textContent = entries.length;
-    $('bib').innerHTML = entries.map(({ source, entry }) => { const [text, kind] = TRUST[source.trust] || TRUST.unverified; return `<li>${safeEmphasis(entry.html)} <span class="wr-badge wr-${kind}">${text}</span></li>`; }).join('') || '<li class="wr-muted">Metne atıf eklendiğinde kaynaklar burada listelenir.</li>';
+    $('bib').innerHTML = entries.map(({ source, entry }) => { const [text, kind] = TRUST[source.trust] || TRUST.unverified; return `<li>${safeEmphasis(entry.html)} <span class="wr-badge wr-${kind}">${text}</span>${entry.notes.length ? `<small class="wr-muted"> · ${esc(entry.notes.join('; '))}</small>` : ''}</li>`; }).join('') || '<li class="wr-muted">Metne atıf eklendiğinde kaynaklar burada görünür.</li>';
   }
   function insertBibliography() {
-    const byId = sourcesById(), ids = [...new Set([...$('editor').querySelectorAll('span.cite')].flatMap(span => Cite.parseRefs(span.dataset.cite).map(ref => ref.docId)))];
-    const entries = ids.map(id => byId[id]).filter(Boolean).map(source => Cite.referenceEntry(source)).sort((a, b) => a.text.localeCompare(b.text, 'tr'));
+    const entries = bibliographyEntries().map(item => item.entry);
     if (!entries.length) return say('Önce metne kaynaklı bir cevap ekleyin.', 'warn');
     $('editor').querySelector('[data-bibliography]')?.remove();
     const block = document.createElement('div'); block.dataset.bibliography = '1';
@@ -298,7 +346,7 @@
   const COMMANDS = { h1: ['formatBlock', 'h1'], h2: ['formatBlock', 'h2'], h3: ['formatBlock', 'h3'], p: ['formatBlock', 'p'], bold: ['bold'], italic: ['italic'], ul: ['insertUnorderedList'], ol: ['insertOrderedList'] };
 
   // ---- saving the manuscript
-  function changed() { S.dirty = true; $('saved').textContent = 'Kaydedilmedi…'; clearTimeout(S.saveTimer); S.saveTimer = setTimeout(save, 1200); renderBibliography(); }
+  function changed() { S.dirty = true; $('saved').textContent = 'Kaydedilmedi…'; clearTimeout(S.saveTimer); S.saveTimer = setTimeout(save, 1200); if (Cite.isNumeric(styleOf())) refreshCitations(); renderBibliography(); }
   async function save() {
     clearTimeout(S.saveTimer);
     if (!S.dirty || S.conflict || !S.projectId) return;
@@ -359,6 +407,18 @@
     try { await api('PATCH', `/projects/${S.projectId}`, { language }); S.data.project.language = language; say(language === 'en' ? 'Cevaplar artık İngilizce yazılacak.' : 'Cevaplar artık Türkçe yazılacak.', 'ok'); }
     catch (error) { fail(error); renderLanguage(); }
   });
+  // Changing the style rewrites every citation and the reference list (a bibliography already inserted in the text is rebuilt).
+  $('citation-style').addEventListener('change', async event => {
+    const citationStyle = event.target.value;
+    try {
+      await api('PATCH', `/projects/${S.projectId}`, { citationStyle });
+      S.data.project.citationStyle = citationStyle;
+      refreshCitations();
+      if ($('editor').querySelector('[data-bibliography]')) insertBibliography(); else { renderBibliography(); changed(); }
+      say(citationStyle === 'apa' ? 'Atıflar APA 7 yazar–yıl biçiminde.' : `Atıflar ${citationStyle === 'ieee' ? 'IEEE' : 'Vancouver'} biçiminde numaralandı; kaynakça atıf sırasına göre dizilir.`, 'ok');
+    } catch (error) { fail(error); renderStyle(); }
+  });
+  window.addEventListener('auth-change', renderStyle);
   $('picker').addEventListener('change', async () => {
     const ids = [...$('picker').querySelectorAll('input:checked')].map(input => input.value), boxes = $('picker').querySelectorAll('input');
     boxes.forEach(input => { input.disabled = true; });
@@ -457,20 +517,14 @@
   }
   $('search-form').addEventListener('submit', event => { event.preventDefault(); runSearch(); });
   $('search-oa').addEventListener('change', () => { if ($('search-q').value.trim()) runSearch(); });
-  $('reembed').addEventListener('click', async event => {
+  $('retry-failed').addEventListener('click', async event => {
     const button = event.currentTarget; button.disabled = true;
     try {
-      const result = await api('POST', `/collections/${S.collectionId}/reembed`, {});
-      say(`${result.restarted} kaynak için embedding yeniden başlatıldı.`, result.restarted ? 'ok' : 'error');
-      await reload(); schedulePoll();
-    } catch (error) { fail(error); }
-    button.disabled = false;
-  });
-  $('redownload').addEventListener('click', async event => {
-    const button = event.currentTarget; button.disabled = true;
-    try {
-      const result = await api('POST', `/collections/${S.collectionId}/redownload`, {});
-      say(`${result.restarted} kaynak yeniden indiriliyor.${result.skipped.length ? ' İndirilemeyenler: ' + result.skipped.map(s => `${s.title.slice(0, 50)} (${s.reason})`).join('; ') : ''}`, result.restarted ? 'ok' : 'error');
+      const result = await api('POST', `/collections/${S.collectionId}/retry-failed`, {});
+      const parts = [result.downloads ? `${result.downloads} kaynak yeniden indiriliyor` : '', result.embeddings ? `${result.embeddings} kaynak embedding’e gönderildi` : '', result.verifications ? `${result.verifications} kaynağın künyesi yeniden aranıyor` : ''].filter(Boolean);
+      const skipped = result.skipped?.length ? ` İndirilemeyenler: ${result.skipped.map(s => `${s.title.slice(0, 50)} (${s.reason})`).join('; ')}` : '';
+      const note = result.downloadError ? ` İndirme başlatılamadı: ${result.downloadError}` : '';
+      say(parts.length ? `${parts.join(', ')}.${skipped}${note}` : `Yeniden denenecek kaynak başlatılamadı.${skipped}${note}`, parts.length ? 'ok' : 'error');
       await reload(); schedulePoll();
     } catch (error) { fail(error); }
     button.disabled = false;
