@@ -8,6 +8,7 @@ const Skills = require('./lib/writer-skills.cjs');
 const Chunker = require('./lib/writer-chunker.cjs');
 const Meta = require('./lib/writer-meta.cjs');
 const Search = require('./lib/writer-search.cjs');
+const Tei = require('./lib/tei-embed.cjs');
 const Answer = require('./lib/writer-answer.cjs');
 const Manuscript = require('./lib/writer-manuscript.cjs');
 const Cite = require('./writer-cite.js');
@@ -18,11 +19,12 @@ const MAX_TITLE = 120, MAX_QUESTION = 4000, MAX_COLLECTIONS = 200, MAX_IMPORT = 
 const SEARCH_LIMIT = () => Math.min(12, Math.max(2, Number(process.env.WRITER_PASSAGES) || 6));
 const httpError = (status, message, extra = {}) => Object.assign(Error(message), { status, ...extra });
 
-// Runs at most `size` tasks at once; used so many uploads cannot flood the PDF reader and the embedding quota.
+// Runs at most `size` tasks at once (a number, or a function re-read on every start); used so many uploads cannot flood the PDF reader and the embedding quota.
 function limiter(size) {
+  const limit = () => typeof size === 'function' ? size() : size;
   let active = 0;
   const waiting = [];
-  const next = () => { while (active < size && waiting.length) { active++; const { task, resolve } = waiting.shift(); task().finally(() => { active--; next(); }).then(resolve, resolve); } };
+  const next = () => { while (active < limit() && waiting.length) { active++; const { task, resolve } = waiting.shift(); task().finally(() => { active--; next(); }).then(resolve, resolve); } };
   return task => new Promise(resolve => { waiting.push({ task, resolve }); next(); });
 }
 
@@ -43,8 +45,9 @@ function createService(options = {}) {
   const verifyingIds = new Set();            // documents whose künye is being looked up (queued or running), shown as a spinner
   // Reading a file (Python) and embedding its passages (Gemini) are different resources: separate limits let the next file
   // be read while the previous one waits for embeddings. WRITER_PROCESS_PARALLEL / WRITER_EMBED_PARALLEL tune them.
+  // Gemini is quota-bound (3 documents at a time); a self-hosted TEI server has no quota, so it is not held back (8 unless overridden).
   const parallelOf = (name, fallback) => Math.min(8, Math.max(1, Number(process.env[name]) || fallback));
-  const processing = limiter(parallelOf('WRITER_PROCESS_PARALLEL', 2)), embedding = limiter(parallelOf('WRITER_EMBED_PARALLEL', 3)), verifying = limiter(1), downloading = limiter(2);
+  const processing = limiter(parallelOf('WRITER_PROCESS_PARALLEL', 2)), embedding = limiter(() => parallelOf('WRITER_EMBED_PARALLEL', Tei.active() ? 8 : 3)), verifying = limiter(1), downloading = limiter(2);
   // limiter() reports a failed task as a resolved value; stage() turns it back into a rejection for the caller.
   const stage = async (slot, task) => { const out = await slot(async () => { try { return { value: await task() }; } catch (error) { return { error }; } }); if (out.error) throw out.error; return out.value; };
   const searches = new Map();                // user id -> times of recent paper searches
@@ -91,7 +94,7 @@ function createService(options = {}) {
   // A user's own uploads are never put in the shared cache.
   async function embedRows(doc, rows, options) {
     if (!doc.meta?.scholarId) return deps.embed.embedBatch(rows.map(r => r.text), 'document', options);
-    const model = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001', cache = Cache.defaultCache();
+    const model = deps.embed.modelId?.() || process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001', cache = Cache.defaultCache();
     const hits = cache.getEmbeddings(model, rows.map(r => r.text));
     const missing = rows.map((r, i) => i).filter(i => !hits.has(i));
     const fresh = missing.length ? await deps.embed.embedBatch(missing.map(i => rows[i].text), 'document', options) : [];

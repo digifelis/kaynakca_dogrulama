@@ -342,6 +342,28 @@
       async v => { if (!v.key) throw Error('Kaydetmek için bir API anahtarı yazın.'); const r = await api('PUT', '/api/admin/settings/scholar', { key: v.key }); scholarNote = r.test?.ok ? { text: 'Anahtar sınandı ve kaydedildi: ' + r.test.message, bad: false } : { text: 'Anahtar kaydedildi ancak şu an sınanamadı: ' + r.test?.message, bad: true }; render(); },
       h('div', { class: 'adm-toolbar' }, h('button', { type: 'button', class: 'copy-button btn-secondary', onclick: async event => { const button = event.currentTarget; button.disabled = true; showScholar('Sınanıyor…'); try { const r = await api('POST', '/api/admin/settings/scholar/test'); showScholar((r.ok ? 'Başarılı: ' : 'Başarısız: ') + r.message, !r.ok); } catch (error) { showScholar('Sınama yapılamadı: ' + error.message, true); } finally { button.disabled = false; } } }, 'Kayıtlı anahtarı sına'),
         data.scholar?.keySet ? h('button', { type: 'button', class: 'copy-button btn-secondary', onclick: guard(status, async () => { if (!confirm('Kayıtlı Semantic Scholar anahtarı silinsin mi?')) return; await api('PUT', '/api/admin/settings/scholar', { clear: true }); scholarNote = { text: 'Anahtar silindi.', bad: false }; render(); }) }, 'Anahtarı sil') : null, scholarMsg));
+    const emb = (await api('GET', '/api/admin/settings/embedding')).embedding;
+    const embedMsg = h('p', { class: 'acct-message', role: 'status', hidden: true });
+    const showEmbed = (message, bad = false) => { embedMsg.hidden = false; embedMsg.textContent = message; embedMsg.className = 'acct-message ' + (bad ? 'is-error' : 'is-ok'); };
+    const embedBody = f => { const v = Object.fromEntries(new FormData(f)); return { provider: v.provider, url: v.url, model: v.model, queryPrefix: v.queryPrefix, passagePrefix: v.passagePrefix, batch: Number(v.batch) || 8, concurrency: Number(v.concurrency) || 4, timeoutSec: Number(v.timeoutSec) || 60, apiKey: v.apiKey, clearApiKey: !!v.clearApiKey }; };
+    const embedForm = section('Embedding (yazım yardımcısı)', 'Kaynak belgelerin anlamsal araması için vektör üretici. "Gemini" mevcut altyapıyı kullanır; "TEI" kendi sunucunuzdaki Text Embeddings Inference konteynerini çağırır. Aynı belge parçası için farklı modellerin vektörleri karşılaştırılamaz: seçimi değiştirdiğinizde daha önce eklenmiş belgeler anahtar kelime aramasıyla aranmaya devam eder; anlamsal arama için onları yeniden ekleyin.', [
+      h('label', { class: 'acct-field' }, h('span', {}, 'Sağlayıcı'), select('provider', [['gemini', 'Gemini (API anahtar havuzu)'], ['tei', 'TEI (kendi sunucum)']], emb.provider, () => {})),
+      text('TEI sunucu adresi', 'url', emb.url || 'http://embedding:8082', { required: false, placeholder: 'http://embedding:8082', spellcheck: 'false' }),
+      text('Model adı (etiket; önbellek ve kayıtlarda görünür)', 'model', emb.model, { required: false, placeholder: 'multilingual-e5-small', maxlength: 80 }),
+      text('Belge parçası öneki', 'passagePrefix', emb.passagePrefix, { required: false, maxlength: 40 }),
+      text('Sorgu öneki', 'queryPrefix', emb.queryPrefix, { required: false, maxlength: 40 }),
+      text('Parti boyutu (tek istekteki metin sayısı)', 'batch', emb.batch, { type: 'number', min: 1, max: 64 }),
+      text('Eşzamanlı istek sayısı', 'concurrency', emb.concurrency, { type: 'number', min: 1, max: 8 }),
+      text('Zaman aşımı (sn)', 'timeoutSec', emb.timeoutSec, { type: 'number', min: 5, max: 600 }),
+      text('Erişim anahtarı (TEI --api-key kullanıyorsa; isteğe bağlı)', 'apiKey', '', { type: 'password', autocomplete: 'new-password', required: false, spellcheck: 'false', placeholder: emb.apiKeySet ? '(kayıtlı — değiştirmek için yazın)' : '' }),
+      emb.apiKeySet ? check('Kayıtlı erişim anahtarını sil', 'clearApiKey', false) : null,
+      h('small', { class: 'acct-muted' }, 'E5 modelleri için önekler "passage: " ve "query: " olmalıdır (sondaki boşluk önemli); BGE-M3 gibi önek istemeyen modellerde ikisini de boşaltın. Docker ağında adres http://servis-adı:8082 biçimindedir (TEI'yi --port 8082 ile başlatın). Bu sağlayıcı seçiliyken kota beklemesi ve belge sırası sınırı yoktur; sunucu gücü sınırdır.'),
+      embedMsg].filter(Boolean),
+    async (v, f) => { const r = await api('PUT', '/api/admin/settings/embedding', embedBody(f)); showEmbed(r.embedding.provider === 'tei' ? 'TEI etkin: ' + r.embedding.url : 'Gemini kullanılıyor.'); },
+    h('div', { class: 'adm-toolbar' }, h('button', { type: 'button', class: 'copy-button btn-secondary', onclick: async event => {
+      const button = event.currentTarget, f = button.closest('details').querySelector('form'); button.disabled = true; showEmbed('Sınanıyor…');
+      try { const r = await api('POST', '/api/admin/settings/embedding/test', embedBody(f)); showEmbed((r.ok ? 'Başarılı: ' : 'Başarısız: ') + r.message, !r.ok); } catch (error) { showEmbed('Sınama yapılamadı: ' + error.message, true); } finally { button.disabled = false; }
+    } }, 'Bağlantıyı sına (kaydetmeden)')));
     const smtpForm = section('E-posta (SMTP)', 'Adres doğrulama ve parola sıfırlama iletileri için.', [
       text('Sunucu', 'host', s.host, { required: false }), text('Port', 'port', s.port || 587, { type: 'number', required: false }), check('Doğrudan TLS (465)', 'secure', s.secure), check('STARTTLS iste', 'requireTls', s.requireTls !== false),
       text('Kullanıcı', 'user', s.user, { required: false }), text('Parola', 'pass', '', { type: 'password', autocomplete: 'new-password', required: false, placeholder: s.passSet ? '(kayıtlı — değiştirmek için yazın)' : '' }),
@@ -359,7 +381,7 @@
         h('td', {}, h('button', { type: 'button', class: 'text-button', disabled: !k.entries, onclick: guard(status, async () => { if (!confirm(CACHE_NAMES[k.kind] + ' silinsin mi? Bunlar gerektiğinde yeniden sorgulanır.')) return; const r = await api('DELETE', '/api/admin/cache/' + k.kind); notice(status, r.removed + ' kayıt silindi.'); render(); }) }, 'Temizle'))))));
     panel.append(status,
       section('Genel', null, [check('Yeni kayıtlara izin ver', 'registrationOpen', g.registrationOpen), h('label', { class: 'acct-field' }, h('span', {}, 'Yeni hesapların paketi'), select('defaultPlan', [['', 'İlk paket'], ...data.plans.map(p => [p.id, p.title])], g.defaultPlan || '', () => {}))],
-        async v => { await api('PUT', '/api/admin/settings/general', { registrationOpen: !!v.registrationOpen, defaultPlan: v.defaultPlan }); }), ldapForm, scholarForm, smtpForm, cacheSection);
+        async v => { await api('PUT', '/api/admin/settings/general', { registrationOpen: !!v.registrationOpen, defaultPlan: v.defaultPlan }); }), ldapForm, scholarForm, embedForm, smtpForm, cacheSection);
   }
 
   const reports = panel => window.AdminReports.mount(panel, { h, fmt, api, table, cards, when, dur });

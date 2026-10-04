@@ -104,6 +104,19 @@ function createAdminService({ app, writerStore = null, wordService = null, llmKe
     if (out.from && !/<?[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+>?$/.test(out.from)) throw httpError(400, 'Gönderen adresi geçerli bir e-posta içermelidir.', 'bad_request');
     return out;
   }
+  // Writing-assistant embeddings: provider choice and TEI server options (kept as typed; prefixes may be empty).
+  function parseEmbedding(input) {
+    const Tei = require('./lib/tei-embed.cjs');
+    const provider = input.provider === 'tei' ? 'tei' : 'gemini', rawUrl = String(input.url || '').trim();
+    if (rawUrl && !Tei.normalizeUrl(rawUrl)) throw httpError(400, 'Sunucu adresi http:// veya https:// ile başlamalı; kullanıcı adı, parola ve sorgu içermemeli.', 'bad_request');
+    if (provider === 'tei' && !rawUrl) throw httpError(400, 'TEI kullanmak için sunucu adresi gerekli (örn. http://embedding:8082).', 'bad_request');
+    const model = String(input.model || '').trim();
+    if (model && !/^[\w.\/:-]{1,80}$/.test(model)) throw httpError(400, 'Model adı yalnızca harf, rakam ve . _ - / : içerebilir.', 'bad_request');
+    const prefix = (value, label) => { const v = typeof value === 'string' ? value : ''; if (v.length > 40 || /[\r\n]/.test(v)) throw httpError(400, label + ' en fazla 40 karakter ve tek satır olmalı.', 'bad_request'); return v; };
+    return { provider, url: Tei.normalizeUrl(rawUrl), model, queryPrefix: prefix(input.queryPrefix, 'Sorgu öneki'), passagePrefix: prefix(input.passagePrefix, 'Belge öneki'),
+      batch: int(input.batch || 8, 'Parti boyutu', 1, 64), concurrency: int(input.concurrency || 4, 'Eşzamanlı istek', 1, 8), timeoutSec: int(input.timeoutSec || 60, 'Zaman aşımı', 5, 600),
+      apiKey: typeof input.apiKey === 'string' ? input.apiKey.trim() : '', clearApiKey: input.clearApiKey === true };
+  }
 
   async function handle(req, res, url, json) {
     if (!url.pathname.startsWith('/api/admin')) return false;
@@ -398,6 +411,24 @@ function createAdminService({ app, writerStore = null, wordService = null, llmKe
           const test = await Scholar.check(Scholar.apiKey());
           record(actor, req, 'scholar.key_tested', 'settings', 'scholar', { ok: test.ok });
           return json(res, 200, { ...test, scholar: view() }), true;
+        }
+      }
+      // ---- Embedding provider (Gemini or a self-hosted TEI server). Vectors of different models are not comparable, so a change applies to documents added afterwards.
+      if (route === '/settings/embedding' || route === '/settings/embedding/test') {
+        const Tei = require('./lib/tei-embed.cjs');
+        const view = () => { const s = auth.settings.embedding(); return { provider: s.provider || 'gemini', url: s.url || '', model: s.model || '', queryPrefix: s.queryPrefix ?? 'query: ', passagePrefix: s.passagePrefix ?? 'passage: ', batch: s.batch || 8, concurrency: s.concurrency || 4, timeoutSec: s.timeoutSec || 60, apiKeySet: !!s.apiKeySet, active: Tei.active() }; };
+        if (route === '/settings/embedding' && req.method === 'GET') return json(res, 200, { embedding: view() }), true;
+        if (route === '/settings/embedding' && req.method === 'PUT') {
+          const input = parseEmbedding(await readBody(req, 8 * 1024)); auth.settings.saveEmbedding(input);
+          record(actor, req, 'admin.settings_embedding', 'settings', 'embedding', { provider: input.provider, url: input.url, model: input.model, keyChanged: !!input.apiKey });
+          return json(res, 200, { embedding: view() }), true;
+        }
+        if (route === '/settings/embedding/test' && req.method === 'POST') {
+          // Tests the values in the form (saved token is used when the field is left blank), without saving them.
+          const input = parseEmbedding({ ...(await readBody(req, 8 * 1024)), provider: 'tei' }), saved = auth.settings.embedding({ secret: true });
+          const result = await Tei.check(Tei.settings({ ...input, apiKey: input.apiKey || (input.clearApiKey ? '' : saved.apiKey || '') }));
+          record(actor, req, 'admin.embedding_test', 'settings', 'embedding', { ok: result.ok, url: input.url });
+          return json(res, 200, result), true;
         }
       }
       if (route === '/settings/smtp' && req.method === 'PUT') {

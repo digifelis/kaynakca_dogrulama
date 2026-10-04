@@ -144,6 +144,7 @@ if (require.main === module) {
     wordService.useGuard(require('./lib/word-guard.cjs')(app));
     { const Metrics = require('./lib/metrics.cjs'); Metrics.startSampler(Metrics.defaultMetrics()); Metrics.defaultMetrics().prune(); }
     require('./lib/scholar.cjs').configure({ key: () => app.auth.settings.scholar({ secret: true }).key });
+    require('./lib/tei-embed.cjs').configure({ config: () => app.auth.settings.embedding({ secret: true }) });
     const purged = wordService.purgeLegacy();
     if (purged) console.log(`Hesap sistemi etkinleştirildi: sahipsiz ${purged} eski Word belgesi silindi.`);
     writerService.configure({ usage: app.usage });
