@@ -138,7 +138,20 @@
       <div class="wr-row">${source.status === 'ready' && source.searchMode === 'keyword' && source.chunkCount ? '<button class="text-button btn-quiet" type="button" data-action="retry">Anlamsal aramayı yeniden dene</button>' : ''}<button class="text-button btn-danger" type="button" data-action="delete">Kaynağı sil</button></div>
     </article>`;
   }
+  // Papers found through the search whose PDF could not be downloaded: one button fetches them all again.
+  const downloadFailed = source => source.status === 'error' && !!source.meta?.scholarId && /^PDF indirilemedi/.test(source.error || '');
+  // Sources that fell back to keyword search (embedding failed or was interrupted): one button embeds them all again.
+  const keywordOnly = source => source.status === 'ready' && source.searchMode === 'keyword' && source.chunkCount > 0;
+  function renderFailedBar() {
+    const sources = S.coll?.sources || [], failed = sources.filter(downloadFailed).length, keyword = sources.filter(keywordOnly).length;
+    $('failed-bar').hidden = !failed && !keyword;
+    $('redownload').hidden = !failed; $('reembed').hidden = !keyword;
+    $('failed-note').textContent = [failed ? `${failed} kaynağın PDF’i indirilemedi (site istek sınırı ya da bağlantı sorunu olabilir).` : '', keyword ? `${keyword} kaynak yalnız anahtar kelimeyle aranıyor (embedding alınamamış).` : ''].filter(Boolean).join(' ');
+    if (failed) $('redownload').textContent = `İndirilemeyenleri yeniden indir (${failed})`;
+    if (keyword) $('reembed').textContent = `Anlamsal aramayı yeniden dene (${keyword})`;
+  }
   function renderSources() {
+    renderFailedBar();
     const sources = S.coll?.sources || [], sig = JSON.stringify(sources);
     if (sig === S.sourcesSig) return;
     // Typing in a künye form is never wiped by a refresh; the render is retried when the field loses focus.
@@ -444,6 +457,24 @@
   }
   $('search-form').addEventListener('submit', event => { event.preventDefault(); runSearch(); });
   $('search-oa').addEventListener('change', () => { if ($('search-q').value.trim()) runSearch(); });
+  $('reembed').addEventListener('click', async event => {
+    const button = event.currentTarget; button.disabled = true;
+    try {
+      const result = await api('POST', `/collections/${S.collectionId}/reembed`, {});
+      say(`${result.restarted} kaynak için embedding yeniden başlatıldı.`, result.restarted ? 'ok' : 'error');
+      await reload(); schedulePoll();
+    } catch (error) { fail(error); }
+    button.disabled = false;
+  });
+  $('redownload').addEventListener('click', async event => {
+    const button = event.currentTarget; button.disabled = true;
+    try {
+      const result = await api('POST', `/collections/${S.collectionId}/redownload`, {});
+      say(`${result.restarted} kaynak yeniden indiriliyor.${result.skipped.length ? ' İndirilemeyenler: ' + result.skipped.map(s => `${s.title.slice(0, 50)} (${s.reason})`).join('; ') : ''}`, result.restarted ? 'ok' : 'error');
+      await reload(); schedulePoll();
+    } catch (error) { fail(error); }
+    button.disabled = false;
+  });
   $('search-pager').addEventListener('click', event => { const button = event.target.closest('button[data-page]'); if (!button || button.disabled) return; Q.page = Number(button.dataset.page); renderSearch(); $('search-results').scrollIntoView({ block: 'nearest' }); });
   $('search-results').addEventListener('change', event => {
     const box = event.target.closest('input[data-paper]'); if (!box) return;

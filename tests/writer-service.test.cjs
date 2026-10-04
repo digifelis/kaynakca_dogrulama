@@ -417,3 +417,68 @@ test("public papers are downloaded, read and embedded once for everyone; a user'
   await upload(second, b.id, 'kendi2.pdf', MOTIVATION); await env.service.idle();
   assert.ok(afterOne > before && embedded > afterOne, 'private uploads always go through embedding');
 });
+
+test('redownload: indirilemeyen kaynaklar tek istekle yeniden indirilir, başarısızlar koleksiyonda kalır', async t => {
+  let refuse = true;
+  const scholar = fakeScholar({ async download(url) { if (refuse) throw Error('dergipark.org.tr: HTTP 429'); return Buffer.from(MOTIVATION, 'base64'); } });
+  const env = await setup({ scholar }); t.after(() => env.close());
+  const api = env.client();
+  const { collection } = await api('POST', '/collections', { name: 'Yeniden' });
+  assert.equal((await api('POST', `/collections/${collection.id}/redownload`, {})).restarted, 0, 'nothing failed yet');
+  await api('POST', `/collections/${collection.id}/import`, { paperIds: [PAPER.paperId] }); await env.service.idle();
+  let view = await api('GET', `/collections/${collection.id}`);
+  assert.equal(view.sources[0].status, 'error'); assert.match(view.sources[0].error, /^PDF indirilemedi: .*429/);
+  refuse = false;
+  const again = await api('POST', `/collections/${collection.id}/redownload`, {});
+  assert.equal(again.status, 202, JSON.stringify(again)); assert.equal(again.requested, 1); assert.equal(again.restarted, 1);
+  await env.service.idle();
+  view = await api('GET', `/collections/${collection.id}`);
+  assert.equal(view.sources.length, 1, 'the failed record is reused, not duplicated'); assert.equal(view.sources[0].status, 'ready'); assert.equal(view.sources[0].error, null);
+  assert.equal((await api('POST', `/collections/${collection.id}/redownload`, {})).restarted, 0, 'ready sources are left alone');
+  assert.equal((await api('POST', `/collections/${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}/redownload`, {})).status, 404);
+});
+
+test('import: indirmesi başarısız kalan makale yeniden seçilince çift kayıt olmaz', async t => {
+  let refuse = true;
+  const scholar = fakeScholar({ async download() { if (refuse) throw Error('x: HTTP 429'); return Buffer.from(MOTIVATION, 'base64'); } });
+  const env = await setup({ scholar }); t.after(() => env.close());
+  const api = env.client();
+  const { collection } = await api('POST', '/collections', { name: 'Tekrar' });
+  await api('POST', `/collections/${collection.id}/import`, { paperIds: [PAPER.paperId] }); await env.service.idle();
+  refuse = false;
+  const second = await api('POST', `/collections/${collection.id}/import`, { paperIds: [PAPER.paperId] });
+  assert.equal(second.added.length, 1, JSON.stringify(second)); await env.service.idle();
+  const view = await api('GET', `/collections/${collection.id}`);
+  assert.equal(view.sources.length, 1); assert.equal(view.sources[0].status, 'ready');
+});
+
+test('reembed: anahtar kelimeye düşen kaynaklar tek istekle yeniden vektörlenir', async t => {
+  const env = await setup({ embedBroken: true }); t.after(() => env.close());
+  const api = env.client();
+  const { collection } = await projectWith(api, 'Vektör', ['m.pdf', MOTIVATION]); await env.service.idle();
+  let view = await api('GET', `/collections/${collection.id}`);
+  assert.equal(view.sources[0].status, 'ready'); assert.equal(view.sources[0].searchMode, 'keyword');
+  env.state.embedBroken = false;
+  const again = await api('POST', `/collections/${collection.id}/reembed`, {});
+  assert.equal(again.status, 202, JSON.stringify(again)); assert.equal(again.restarted, 1);
+  await env.service.idle();
+  view = await api('GET', `/collections/${collection.id}`);
+  assert.equal(view.sources[0].searchMode, 'semantic'); assert.equal(view.sources[0].error, null);
+  assert.equal((await api('POST', `/collections/${collection.id}/reembed`, {})).restarted, 0, 'nothing left to embed');
+  assert.equal((await api('POST', `/collections/00000000-0000-0000-0000-000000000000/reembed`, {})).status, 404);
+});
+
+test('sahipsiz kalan "embedding" belgesi süre dolunca yeniden denenebilir duruma döner', async t => {
+  const env = await setup(); t.after(() => env.close());
+  const api = env.client();
+  const { collection, sources } = await projectWith(api, 'Takılı', ['m.pdf', MOTIVATION]); await env.service.idle();
+  const raw = require('node:sqlite'), file = require('node:path').join(process.env.WRITER_DATA_DIR, 'writer.db');
+  const poke = (createdAgoMs) => { const d = new raw.DatabaseSync(file); d.prepare("UPDATE documents SET status = 'embedding', error = NULL WHERE id = ?").run(sources[0].id); d.prepare('UPDATE documents SET created_at = ? WHERE id = ?').run(Date.now() - createdAgoMs, sources[0].id); d.close(); };
+  poke(60 * 1000);
+  assert.equal((await api('GET', `/collections/${collection.id}`)).sources[0].status, 'embedding', 'a young document is left alone');
+  poke(60 * 60 * 1000);
+  const swept = (await api('GET', `/collections/${collection.id}`)).sources[0];
+  assert.equal(swept.status, 'ready'); assert.equal(swept.searchMode, 'keyword'); assert.match(swept.error, /yarım kaldı/);
+  assert.equal((await api('POST', `/collections/${collection.id}/sources/${sources[0].id}/retry`, {})).status, 202, 'and can be retried now'); await env.service.idle();
+  assert.equal((await api('GET', `/collections/${collection.id}`)).sources[0].searchMode, 'semantic');
+});

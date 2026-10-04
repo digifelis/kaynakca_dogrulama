@@ -18,6 +18,8 @@ const Cache = require('./lib/cache-store.cjs');
 const MAX_TITLE = 120, MAX_QUESTION = 4000, MAX_COLLECTIONS = 200, MAX_IMPORT = 25, SEARCHES_PER_MINUTE = 20;
 // One search fetches the first 100 hits in a single request; the browser pages through them 10 at a time.
 const SEARCH_RESULTS = 100;
+// With TEI many papers are downloaded at once; requests to the same publisher are spaced by this long (WRITER_DOWNLOAD_HOST_GAP_MS).
+const HOST_GAP_MS = Math.max(0, Number(process.env.WRITER_DOWNLOAD_HOST_GAP_MS ?? 2000) || 0);
 const SEARCH_LIMIT = () => Math.min(12, Math.max(2, Number(process.env.WRITER_PASSAGES) || 6));
 const httpError = (status, message, extra = {}) => Object.assign(Error(message), { status, ...extra });
 
@@ -48,8 +50,8 @@ function createService(options = {}) {
   // Reading a file (Python) and embedding its passages (Gemini) are different resources: separate limits let the next file
   // be read while the previous one waits for embeddings. WRITER_PROCESS_PARALLEL / WRITER_EMBED_PARALLEL tune them.
   // Gemini is quota-bound (3 documents at a time); a self-hosted TEI server has no quota, so it is not held back (8 unless overridden).
-  const parallelOf = (name, fallback) => Math.min(8, Math.max(1, Number(process.env[name]) || fallback));
-  const processing = limiter(parallelOf('WRITER_PROCESS_PARALLEL', 2)), embedding = limiter(() => parallelOf('WRITER_EMBED_PARALLEL', Tei.active() ? 8 : 3)), verifying = limiter(1), downloading = limiter(2);
+  const parallelOf = (name, fallback) => Math.min(Tei.active() ? 32 : 8, Math.max(1, Number(process.env[name]) || fallback));
+  const processing = limiter(() => parallelOf('WRITER_PROCESS_PARALLEL', 2)), embedding = limiter(() => parallelOf('WRITER_EMBED_PARALLEL', Tei.active() ? 8 : 3)), verifying = limiter(1), downloading = limiter(() => Tei.active() ? parallelOf('WRITER_DOWNLOAD_PARALLEL', 4) : 2);
   // limiter() reports a failed task as a resolved value; stage() turns it back into a rejection for the caller.
   const stage = async (slot, task) => { const out = await slot(async () => { try { return { value: await task() }; } catch (error) { return { error }; } }); if (out.error) throw out.error; return out.value; };
   const searches = new Map();                // user id -> times of recent paper searches
@@ -79,16 +81,32 @@ function createService(options = {}) {
   function projectPayload(userId, plan, projectId) {
     const project = db().getProject(userId, projectId);
     if (!project) throw httpError(404, 'Proje bulunamadı.');
-    const documents = sourcesOf(userId, projectId), byId = sourceMap(documents);
+    const documents = listSwept(userId, () => sourcesOf(userId, projectId)), byId = sourceMap(documents);
     const manuscript = db().getManuscript(userId, projectId);
     return { project, collectionIds: db().projectCollectionIds(userId, projectId), sources: documents.map(documentView), messages: db().listMessages(userId, projectId).map(m => messageView(m, byId)),
       manuscript: { html: Manuscript.renderCitations(manuscript.html, byId), revision: manuscript.revision, updatedAt: manuscript.updatedAt }, usage: usageOf(userId, plan) };
   }
 
+  // A document that is still "processing"/"embedding" but that no running task owns (the server restarted, a task died) would stay that way for good
+  // and could not be retried. After WRITER_ORPHAN_MINUTES (20) it is put back into a state the user can act on.
+  const ORPHAN_MS = Math.max(60000, (Number(process.env.WRITER_ORPHAN_MINUTES) || 20) * 60000);
+  function sweepOrphans(userId, docs) {
+    let changed = false;
+    for (const d of docs) {
+      if (!['processing', 'embedding'].includes(d.status) || controllers.has(d.id) || Date.now() - d.createdAt < ORPHAN_MS) continue;
+      db().updateDocument(userId, d.id, d.chunkCount
+        ? { status: 'ready', searchMode: 'keyword', error: 'Embedding yarım kaldı; “Anlamsal aramayı yeniden dene” ile tamamlayın.' }
+        : { status: 'error', error: 'İşlem yarım kaldı. Kaynağı yeniden ekleyin.' });
+      changed = true;
+    }
+    return changed;
+  }
+  const listSwept = (userId, load) => { const docs = load(); return sweepOrphans(userId, docs) ? load() : docs; };
+
   function collectionPayload(userId, collectionId) {
     const collection = db().getCollection(userId, collectionId);
     if (!collection) throw httpError(404, 'Koleksiyon bulunamadı.');
-    return { collection, sources: db().listDocuments(userId, collectionId).map(documentView) };
+    return { collection, sources: listSwept(userId, () => db().listDocuments(userId, collectionId)).map(documentView) };
   }
 
   // ---- source processing: extract text and künye, split into passages, embed, then verify the künye in the background
@@ -179,18 +197,39 @@ function createService(options = {}) {
     if (recent.length >= SEARCHES_PER_MINUTE) throw httpError(429, 'Çok sık arama yaptınız; bir dakika sonra yeniden deneyin.');
     recent.push(now); searches.set(userId, recent);
   }
-  const importPaper = (userId, collectionId, doc, rec, limits) => track(downloading(async () => {
+  // With Gemini the download slot is held for the whole import, which also paces the quota-bound embedding calls.
+  // With TEI (no quota) only the download itself holds the slot; reading and embedding then wait on their own limits (processing, embedding).
+  // Holding it for the whole import would cap the documents in flight at the download limit.
+  // Embeds the passages a document is still missing (after a failure it was left in keyword mode).
+  const startReembed = (userId, collectionId, doc) => {
+    db().updateDocument(userId, doc.id, { status: 'processing', error: null });
+    track(deps.usage.run({ userId, kind: 'source-embed', detail: { retry: true, collectionId } }, async () => { const controller = new AbortController(); controllers.set(doc.id, controller); try { await stage(embedding, () => finishEmbedding(userId, doc, controller.signal)); } finally { controllers.delete(doc.id); } }).catch(() => {}));
+  };
+  const keywordOnly = d => d.status === 'ready' && d.searchMode === 'keyword' && d.chunkCount > 0;
+  // A found paper whose PDF could not be downloaded (publisher limits, network): it stays in the collection as an error and can be fetched again.
+  const downloadFailed = d => d.status === 'error' && !!d.meta?.scholarId && /^PDF indirilemedi/.test(d.error || '');
+  const importPaper = (userId, collectionId, doc, rec, limits) => track((async () => {
     const fail = message => { if (db().getDocument(userId, doc.id)) db().updateDocument(userId, doc.id, { status: 'error', error: 'PDF indirilemedi: ' + message }); };
     const key = 'scholar:' + rec.paperId, extraction = Cache.defaultCache().getExtraction(key);
-    if (extraction) { if (db().getDocument(userId, doc.id)) await enqueue(userId, collectionId, doc, Buffer.alloc(0), 'pdf', limits.documentBytes, knownMeta(rec), { key, extraction }); return; }
-    let buffer; const downloadAt = Date.now();
-    try {
-      buffer = await deps.scholar.download(rec.pdfUrl, { maxBytes: limits.documentBytes });
-      if (!buffer.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw Error('bağlantı bir PDF dosyası döndürmedi (yayıncı sayfası olabilir).');
-    } catch (error) { try { Metrics.defaultMetrics().file({ userId, kind: 'scholar-import', status: 'error', receiveMs: Date.now() - downloadAt, totalMs: Date.now() - downloadAt, error: error.message }); } catch { /* best effort */ } return fail(error.message || 'bilinmeyen hata'); }
-    if (!db().getDocument(userId, doc.id)) return;
-    await enqueue(userId, collectionId, doc, buffer, 'pdf', limits.documentBytes, knownMeta(rec), { key }, { kind: 'scholar-import', bytes: buffer.length, receiveMs: Date.now() - downloadAt });
-  }).catch(() => {}));
+    const holdSlot = !Tei.active();
+    if (extraction) {
+      const cached = () => db().getDocument(userId, doc.id) ? enqueue(userId, collectionId, doc, Buffer.alloc(0), 'pdf', limits.documentBytes, knownMeta(rec), { key, extraction }) : null;
+      await (holdSlot ? stage(downloading, cached) : cached()); return;
+    }
+    const enqueueImport = got => enqueue(userId, collectionId, doc, got.buffer, 'pdf', limits.documentBytes, knownMeta(rec), { key }, { kind: 'scholar-import', bytes: got.buffer.length, receiveMs: got.receiveMs });
+    const got = await stage(downloading, async () => {
+      let buffer; const downloadAt = Date.now();
+      try {
+        buffer = await deps.scholar.download(rec.pdfUrl, { maxBytes: limits.documentBytes, hostGapMs: holdSlot ? 0 : HOST_GAP_MS });
+        if (!buffer.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw Error('bağlantı bir PDF dosyası döndürmedi (yayıncı sayfası olabilir).');
+      } catch (error) { try { Metrics.defaultMetrics().file({ userId, kind: 'scholar-import', status: 'error', receiveMs: Date.now() - downloadAt, totalMs: Date.now() - downloadAt, error: error.message }); } catch { /* best effort */ } fail(error.message || 'bilinmeyen hata'); return null; }
+      const received = { buffer, receiveMs: Date.now() - downloadAt };
+      if (holdSlot) { if (db().getDocument(userId, doc.id)) await enqueueImport(received); return null; }
+      return received;
+    });
+    if (!got || !db().getDocument(userId, doc.id)) return;
+    await enqueueImport(got);
+  })().catch(() => {}));
 
   // ---- questions
   function history(userId, projectId, byId, skipIds) {
@@ -311,6 +350,8 @@ function createService(options = {}) {
         const limits = Plans.limitsFor(plan);
         let records;
         try { records = await deps.scholar.byIds(ids); } catch (error) { throw httpError(error.status || 502, error.message || 'Semantic Scholar kaydı alınamadı.'); }
+        // A paper whose earlier download failed is replaced, so it can be added again instead of being refused as a duplicate.
+        for (const stale of db().listDocuments(userId, collectionId)) if (downloadFailed(stale) && records.some(r => r.paperId === stale.meta.scholarId)) db().deleteDocument(userId, stale.id);
         const have = db().listDocuments(userId, collectionId);
         const haveIds = new Set(have.map(d => d.meta?.scholarId).filter(Boolean)), haveDois = new Set(have.map(d => String(d.meta?.doi || '').toLowerCase()).filter(Boolean));
         const added = [], skipped = [];
@@ -328,6 +369,34 @@ function createService(options = {}) {
         if (added.length) db().touchCollection(userId, collectionId);
         deps.usage.event?.({ userId, kind: 'scholar-import', detail: { requested: ids.length, added: added.length, collectionId } });
         return json(res, 202, { added, skipped }), true;
+      }
+      // Fetch again every paper of the collection whose download failed, from fresh Semantic Scholar records (the user need not remember which ones).
+      if ((m = route.match(/^\/collections\/([0-9a-f-]{36})\/redownload$/)) && req.method === 'POST') {
+        const collectionId = m[1];
+        if (!db().getCollection(userId, collectionId)) throw httpError(404, 'Koleksiyon bulunamadı.');
+        Plans.enforce(plan, 'monthlyTokens', deps.usage.monthTokens(userId));
+        const limits = Plans.limitsFor(plan), failed = db().listDocuments(userId, collectionId).filter(downloadFailed), records = [];
+        try { for (let i = 0; i < failed.length; i += 50) records.push(...await deps.scholar.byIds(failed.slice(i, i + 50).map(d => d.meta.scholarId))); }
+        catch (error) { throw httpError(error.status || 502, error.message || 'Semantic Scholar kaydı alınamadı.'); }
+        const byId = new Map(records.map(r => [r.paperId, r])), skipped = [];
+        let restarted = 0;
+        for (const doc of failed) {
+          const rec = byId.get(doc.meta.scholarId);
+          if (!rec || rec.missing || !rec.pdfUrl) { skipped.push({ paperId: doc.meta.scholarId, title: doc.meta.title || doc.fileName, reason: 'Açık erişimli PDF bulunamadı.' }); continue; }
+          db().updateDocument(userId, doc.id, { status: 'processing', error: null });
+          importPaper(userId, collectionId, doc, rec, limits); restarted++;
+        }
+        if (restarted) db().touchCollection(userId, collectionId);
+        deps.usage.event?.({ userId, kind: 'scholar-import', detail: { retry: true, requested: failed.length, restarted, collectionId } });
+        return json(res, 202, { requested: failed.length, restarted, skipped }), true;
+      }
+      // Semantic search for every document of the collection that fell back to keyword search (embedding failed or was interrupted).
+      if ((m = route.match(/^\/collections\/([0-9a-f-]{36})\/reembed$/)) && req.method === 'POST') {
+        const collectionId = m[1];
+        if (!db().getCollection(userId, collectionId)) throw httpError(404, 'Koleksiyon bulunamadı.');
+        const docs = listSwept(userId, () => db().listDocuments(userId, collectionId)).filter(keywordOnly);
+        for (const doc of docs) startReembed(userId, collectionId, doc);
+        return json(res, 202, { requested: docs.length, restarted: docs.length }), true;
       }
       if (route === '/suggest' && req.method === 'GET') return json(res, 200, { skill: Skills.suggest(url.searchParams.get('q') || '', plan) }), true;
       if (route === '/collections' && req.method === 'GET') return json(res, 200, { collections: db().listCollections(userId) }), true;
@@ -384,8 +453,7 @@ function createService(options = {}) {
           if (action === 'retry' && req.method === 'POST') {
             if (doc.status === 'processing' || doc.status === 'embedding') throw httpError(409, 'Kaynak şu anda işleniyor.');
             if (!doc.chunkCount) throw httpError(400, 'Metin çıkarılamadığı için bu kaynağı yeniden yükleyin.');
-            db().updateDocument(userId, doc.id, { status: 'processing', error: null });
-            track(deps.usage.run({ userId, kind: 'source-embed', detail: { retry: true, collectionId } }, async () => { const controller = new AbortController(); controllers.set(doc.id, controller); try { await stage(embedding, () => finishEmbedding(userId, doc, controller.signal)); } finally { controllers.delete(doc.id); } }).catch(() => {}));
+            startReembed(userId, collectionId, doc);
             return json(res, 202, { source: documentView(db().getDocument(userId, doc.id)) }), true;
           }
         }

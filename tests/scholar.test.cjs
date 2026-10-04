@@ -30,6 +30,7 @@ test('search: keywords become a plain query, the key is sent as a header, PDF ad
 
 test('search errors are explained and never contain the key', async () => {
   Scholar.configure({ key: () => 'panel-key-123456' });
+  process.env.SCHOLAR_RETRY_MS = '1';
   await withFetch(() => new Response('{}', { status: 429 }), async () => { await assert.rejects(Scholar.search('abc'), e => e.status === 429 && /sınırına/.test(e.message)); });
   await withFetch(() => new Response('{}', { status: 403 }), async () => { await assert.rejects(Scholar.search('abc'), e => e.rejected && !/panel-key/.test(e.message)); });
   await withFetch(() => { throw new TypeError('fetch failed panel-key-123456'); }, async () => { await assert.rejects(Scholar.search('abc'), e => !/panel-key/.test(e.message)); });
@@ -76,4 +77,43 @@ test('admin panel: the Semantic Scholar key is stored sealed, tested on save, ne
     for (const wanted of ['scholar.key_set', 'scholar.key_tested', 'scholar.key_removed']) assert.match(audit, new RegExp(wanted));
     assert.doesNotMatch(audit, /s2k-secret|bad-key/); assert.match(audit, /9876/);
   } finally { global.fetch = real; delete process.env.SCHOLAR_GAP_MS; await h.close(); }
+});
+
+test('download: 429/503 yanıtında bekleyip yeniden dener, aynı siteye istekleri aralar', async () => {
+  const https = require('node:https'), { EventEmitter } = require('node:events'), real = https.get, times = [];
+  let calls = 0, failures = 2;
+  https.get = (u, options, cb) => {
+    const req = new EventEmitter(); req.destroy = () => {}; times.push(Date.now()); calls++;
+    setImmediate(() => {
+      const res = new EventEmitter(); res.resume = () => {}; res.headers = {}; res.destroy = () => {};
+      if (failures-- > 0) { res.statusCode = 429; res.headers['retry-after'] = '0.02'; cb(res); return; }
+      res.statusCode = 200; cb(res); res.emit('data', Buffer.from('%PDF-1.4 ok')); res.emit('end');
+    });
+    return req;
+  };
+  const lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+  try {
+    const buffer = await Scholar.download('https://dergi.example/a.pdf', { lookup });
+    assert.equal(buffer.toString(), '%PDF-1.4 ok'); assert.equal(calls, 3, 'two refusals, then success');
+    calls = 0; failures = 99;
+    await assert.rejects(Scholar.download('https://dergi.example/b.pdf', { lookup, retries: 1 }), /HTTP 429.*yeniden ekleyin/); assert.equal(calls, 2);
+    calls = 0; failures = 0; times.length = 0;
+    await Promise.all(['c', 'd', 'e'].map(n => Scholar.download(`https://aralik.example/${n}.pdf`, { lookup, hostGapMs: 60 })));
+    assert.equal(calls, 3); assert.ok(times[1] - times[0] >= 30 && times[2] - times[1] >= 30, 'requests to one host are spaced: ' + times.map(t => t - times[0]));
+  } finally { https.get = real; }
+});
+
+
+test('api: 429 yanıtı beklenip yeniden denenir; hep 429 gelirse kullanıcıya bildirilir', async () => {
+  process.env.SCHOLAR_RETRY_MS = '1';
+  try {
+    let n = 0;
+    await withFetch(() => (++n <= 2 ? new Response('{}', { status: 429 }) : ok([raw(1)])), async calls => {
+      const out = await Scholar.byIds([ID(1)]);
+      assert.equal(calls.length, 3, 'two refusals, then the answer'); assert.equal(out[0].paperId, ID(1));
+    });
+    await withFetch(() => new Response('{}', { status: 429 }), async calls => {
+      await assert.rejects(Scholar.byIds([ID(1)]), e => e.status === 429 && /sınırına/.test(e.message)); assert.equal(calls.length, 4, 'first try plus three retries');
+    });
+  } finally { delete process.env.SCHOLAR_RETRY_MS; }
 });

@@ -340,16 +340,47 @@ Gemini embedding'i yavaş ya da kota sınırlıysa, Hugging Face [Text Embedding
 
 **Kalıcı çalıştırma** (TEI sunucusunda; web sunucusundan ayrı bir makine olabilir, Docker ağı gerekmez):
 ```bash
-mkdir -p ~/embedding-data
-docker run -d --name embedding --restart unless-stopped   -p 8082:8082   -v ~/embedding-data:/data   ghcr.io/huggingface/text-embeddings-inference:cpu-latest   --model-id intfloat/multilingual-e5-small --port 8082 --auto-truncate
+mkdir -p /home/moodle01/p2000/embedding
+docker run -d --name embedding --restart unless-stopped \
+  -p 8082:8082 \
+  -v /home/moodle01/p2000/embedding:/data \
+  ghcr.io/huggingface/text-embeddings-inference:cpu-latest \
+  --model-id intfloat/multilingual-e5-small --port 8082 --auto-truncate
 ```
 - `--restart unless-stopped`: sunucu yeniden başlayınca konteyner de ayağa kalkar.
 - `-p 8082:8082`: web sunucusu bu porta ağ üzerinden bağlanır. TEI varsayılan olarak kimlik doğrulaması istemez; **8082 portunu güvenlik duvarıyla yalnızca web sunucusunun IP'sine açın** (örn. `ufw allow from WEB_SUNUCU_IP to any port 8082 proto tcp`). Sunucu internete açıksa ayrıca `--api-key GIZLI_DEGER` ekleyin ve aynı değeri panelde "Erişim anahtarı" alanına yazın.
-- `-v ~/embedding-data:/data`: model dosyaları burada saklanır; konteyner yeniden oluşturulunca yeniden indirilmez. İlk açılışta model indirildiği için hazır olması bir dakika kadar sürebilir.
+- `-v /home/moodle01/p2000/embedding:/data`: model dosyaları burada saklanır; konteyner yeniden oluşturulunca yeniden indirilmez. İlk açılışta model indirildiği için hazır olması bir dakika kadar sürebilir.
 - Durum ve günlük: `docker logs -f embedding` (`Ready` satırını bekleyin). Sınama (web sunucusundan): `curl -s http://TEI_SUNUCU_IP:8082/embed -H 'Content-Type: application/json' -d '{"inputs":["passage: deneme"]}' | head -c 100`.
 - Güncelleme ya da model değiştirme: `docker rm -f embedding` ve yukarıdaki komutu yeni `--model-id` ile yeniden çalıştırın.
 
 **Panelden etkinleştirme:** Yönetim → Ayarlar → *Embedding (yazım yardımcısı)*: sağlayıcı **TEI**, sunucu adresi `http://TEI_SUNUCU_IP:8082`, "Bağlantıyı sına" ile denedikten sonra Kaydet. Modelin gerektirdiği önekleri girin (E5 için `passage: ` ve `query: `; BGE-M3 için ikisi de boş). TEI seçiliyken kota beklemesi ve belge sırası sınırı uygulanmaz; hız sunucu gücüne bağlıdır. Daha fazla hız için aynı komutla farklı adlı ve portlu ek konteynerler çalıştırıp önlerine bir yük dağıtıcı koyabilirsiniz.
+
+**Kapasiteyi artırma: birden fazla TEI (aynı sunucuda ek konteynerler ya da başka sunucular)**
+
+Tek TEI konteyneri parçaları sırayla işler (AVX'siz Xeon'da e5-small ile yaklaşık 3-4 parça/sn); uygulamada paralel istek göndermek tek konteynerde hız kazandırmaz. Hız için konteyner ya da sunucu sayısını artırın ve hepsinin adresini panele yazın. Panelde *TEI sunucu adresleri* alanına **her satıra bir adres** girilir; istekler en az meşgul sunucuya dağıtılır, ulaşılamayan sunucu 15 sn atlanır ve hepsi kapanırsa hata verilir. "Eşzamanlı istek" ayarı **sunucu başınadır**. En fazla 8 adres tanımlanabilir. Hepsinde **aynı model ve aynı önekler** olmalıdır (aksi halde "Bağlantıyı sına" uyarır).
+
+Aynı sunucuda 16 mantıksal CPU'yu 4 konteynere bölmek için (CPU'lar `--cpuset-cpus` ile sabitlenir; böylece konteynerler birbirinin çekirdeğini çalmaz). Önce mevcut konteyneri 0-3 numaralı CPU'lara sabitleyerek yeniden oluşturun:
+```bash
+docker rm -f embedding
+docker run -d --name embedding --restart unless-stopped \
+  --cpuset-cpus 0-3 -p 8082:8082 \
+  -v /home/moodle01/p2000/embedding:/data \
+  ghcr.io/huggingface/text-embeddings-inference:cpu-latest \
+  --model-id intfloat/multilingual-e5-small --port 8082 --auto-truncate
+```
+`embedding` konteyneri `Ready` olduktan sonra (model zaten indirilmiştir) üç ek konteyneri başlatın:
+```bash
+CPU=4
+for PORT in 8083 8084 8085; do
+  docker run -d --name embedding-$PORT --restart unless-stopped \
+    --cpuset-cpus $CPU-$((CPU+3)) -p $PORT:$PORT \
+    -v /home/moodle01/p2000/embedding:/data \
+    ghcr.io/huggingface/text-embeddings-inference:cpu-latest \
+    --model-id intfloat/multilingual-e5-small --port $PORT --auto-truncate
+  CPU=$((CPU+4))
+done
+```
+Panel adresleri: `http://TEI_SUNUCU_IP:8082`, `:8083`, `:8084`, `:8085` (her biri ayrı satırda). Tek yeni konteyner eklemek için `PORT` ve `--cpuset-cpus` değerlerini değiştirip aynı komutu çalıştırın (örn. 8086 için `--cpuset-cpus 4-7` yerine kullanılmayan bir aralık). İşlemci iki yuvalıysa (`lscpu -e=CPU,CORE,SOCKET`) aynı fiziksel çekirdeğin iki CPU numarasını aynı konteynerde tutmak daha verimlidir. Başka bir TEI **sunucusu** eklemek için bu bölümün başındaki kalıcı komutu o sunucuda çalıştırıp adresini yeni satır olarak ekleyin; güvenlik duvarı kuralını da unutmayın. Durum: `docker ps --filter name=embedding`; her biri için `docker logs --tail 3 embedding-8083`.
 
 **Dikkat:** Farklı modellerin vektörleri karşılaştırılamaz (Gemini 768, e5-small 384 boyut). Sağlayıcıyı değiştirdiğinizde eski belgeler anahtar kelime aramasıyla aranmaya devam eder; anlamsal arama için onları yeniden ekleyin. Embedding istekleri web uygulamasından (LLM servisinden değil) gittiği için erişim yalnızca web sunucusundan TEI sunucusuna gerekir.
 
