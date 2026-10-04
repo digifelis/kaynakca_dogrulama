@@ -268,10 +268,10 @@
     const planName = id => data.plans.find(p => p.id === id)?.title || id || data.plans[0]?.title || '—';
     function edit(skill) {
       const creating = !skill;
-      skill = skill || { name: '', title: '', description: '', minPlan: '', keywords: [], needsSources: true, instruction: '' };
+      skill = skill || { name: '', title: '', description: '', minPlan: '', keywords: [], needsSources: true, instruction: '', inputTemplate: '' };
       const form = h('form', { class: 'acct-form', onsubmit: act(async event => {
         event.preventDefault(); const v = Object.fromEntries(new FormData(form));
-        const body = { title: v.title, description: v.description, minPlan: v.minPlan, keywords: v.keywords, needsSources: !!v.needsSources, instruction: v.instruction };
+        const body = { title: v.title, description: v.description, minPlan: v.minPlan, keywords: v.keywords, needsSources: !!v.needsSources, instruction: v.instruction, inputTemplate: v.inputTemplate };
         if (creating) await api('POST', '/api/admin/skills', { ...body, name: v.name }); else await api('PUT', '/api/admin/skills/' + skill.name, body);
         node.close(); notice(status, 'Kaydedildi.');
       }) },
@@ -282,6 +282,7 @@
       h('label', { class: 'acct-field' }, h('span', {}, 'Anahtar sözcükler (virgülle; skill önerisi için)'), h('input', { name: 'keywords', value: (skill.keywords || []).join(', ') })),
       h('label', { class: 'acct-check' }, h('input', { type: 'checkbox', name: 'needsSources', checked: skill.needsSources }), ' Kaynak pasajı gerektirir (kapalıysa yalnız kullanıcının kendi metnini yeniden yazar)'),
       h('label', { class: 'acct-field' }, h('span', {}, 'Talimat metni'), h('textarea', { name: 'instruction', rows: 14, required: true, maxlength: 8000, class: 'adm-prompt' }, skill.instruction)),
+      h('label', { class: 'acct-field' }, h('span', {}, 'Girdi formu (isteğe bağlı; skill seçilince soru alanına otomatik gelir, kullanıcı doldurur ya da siler)'), h('textarea', { name: 'inputTemplate', rows: 6, maxlength: 2000, class: 'adm-prompt', placeholder: 'Örn. satırlar: Konu: / Araştırma sorusu: / Amaç:' }, skill.inputTemplate || '')),
       h('small', { class: 'acct-muted' }, 'Atıflar sistem tarafından eklenir; talimata atıf biçimi yazmayın. Kaynak parçaları [P1], [P2] gibi kimliklerle anılır.'),
       h('button', { type: 'submit', class: 'copy-button' }, 'Kaydet'));
       const node = dialog(creating ? 'Yeni skill' : skill.title + ' — düzenle', form);

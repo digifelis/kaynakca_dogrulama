@@ -512,7 +512,16 @@
       try { const { skill } = await api('GET', '/suggest?q=' + encodeURIComponent(text)); hint.hidden = !skill; if (skill) hint.textContent = 'Otomatik seçimde kullanılacak skill: ' + skillTitle(skill); } catch { hint.hidden = true; }
     }, 500);
   });
-  $('skill').addEventListener('change', () => { $('suggestion').hidden = true; });
+  // The skill's input form is put into the question box; it replaces only an empty box or the previous, untouched form.
+  const skillTemplate = name => [...S.boot.skills].find(skill => skill.name === name)?.inputTemplate || '';
+  let appliedTemplate = '';
+  $('skill').addEventListener('change', () => {
+    $('suggestion').hidden = true;
+    const question = $('question'), next = skillTemplate($('skill').value);
+    if (question.value.trim() && question.value !== appliedTemplate) return;
+    question.value = next; appliedTemplate = next;
+    if (next) { question.focus(); question.setSelectionRange(next.length, next.length); }
+  });
   armed($('clear'), async () => { try { await api('DELETE', `/projects/${S.projectId}/messages`); await reload(); } catch (error) { fail(error); } });
 
   const editor = $('editor');
