@@ -109,7 +109,7 @@ function createAdminService({ app, writerStore = null, wordService = null, llmKe
     const Tei = require('./lib/tei-embed.cjs');
     const provider = input.provider === 'tei' ? 'tei' : 'gemini', rawUrl = String(input.url || '').trim();
     if (rawUrl && !Tei.normalizeUrl(rawUrl)) throw httpError(400, 'Sunucu adresi http:// veya https:// ile başlamalı; kullanıcı adı, parola ve sorgu içermemeli.', 'bad_request');
-    if (provider === 'tei' && !rawUrl) throw httpError(400, 'TEI kullanmak için sunucu adresi gerekli (örn. http://embedding:8082).', 'bad_request');
+    if (provider === 'tei' && !rawUrl) throw httpError(400, 'TEI kullanmak için sunucu adresi gerekli (örn. http://10.0.0.5:8082).', 'bad_request');
     const model = String(input.model || '').trim();
     if (model && !/^[\w.\/:-]{1,80}$/.test(model)) throw httpError(400, 'Model adı yalnızca harf, rakam ve . _ - / : içerebilir.', 'bad_request');
     const prefix = (value, label) => { const v = typeof value === 'string' ? value : ''; if (v.length > 40 || /[\r\n]/.test(v)) throw httpError(400, label + ' en fazla 40 karakter ve tek satır olmalı.', 'bad_request'); return v; };

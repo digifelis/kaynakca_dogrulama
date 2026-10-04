@@ -338,24 +338,20 @@ Yedekleme: `docker run --rm -v web-data:/data -v "$PWD:/backup" alpine tar czf /
 
 Gemini embedding'i yavaş ya da kota sınırlıysa, Hugging Face [Text Embeddings Inference (TEI)](https://github.com/huggingface/text-embeddings-inference) konteyneri kendi sunucunuzda çalıştırılabilir. Gemini altyapısı yerinde kalır; hangisinin kullanılacağı panelden seçilir. Türkçe ve İngilizce belgeler için `intfloat/multilingual-e5-small` (384 boyut) önerilir. GPU gerekmez; AVX'siz eski Xeon işlemcide de çalışır (ölçüm: ~400 tokenlik parça başına 0,3 sn).
 
-**Kalıcı çalıştırma** (sunucu yeniden başlayınca da ayağa kalkar; web konteynerinin bulunduğu Docker ağına bağlanır):
+**Kalıcı çalıştırma** (TEI sunucusunda; web sunucusundan ayrı bir makine olabilir, Docker ağı gerekmez):
 ```bash
 mkdir -p ~/embedding-data
-docker run -d --name embedding --restart unless-stopped \
-  --network mansur_laravel_net \
-  -p 127.0.0.1:8082:8082 \
-  -v ~/embedding-data:/data \
-  ghcr.io/huggingface/text-embeddings-inference:cpu-latest \
-  --model-id intfloat/multilingual-e5-small --port 8082 --auto-truncate
+docker run -d --name embedding --restart unless-stopped   -p 8082:8082   -v ~/embedding-data:/data   ghcr.io/huggingface/text-embeddings-inference:cpu-latest   --model-id intfloat/multilingual-e5-small --port 8082 --auto-truncate
 ```
-- `--network`: web konteyneri ile aynı ağ olmalıdır (bu kurulumda `mansur_laravel_net`; bkz. 10.5-e). `-p 127.0.0.1:8082:8082` yalnızca sunucudan sınama içindir; dışarıya açılmaz.
+- `--restart unless-stopped`: sunucu yeniden başlayınca konteyner de ayağa kalkar.
+- `-p 8082:8082`: web sunucusu bu porta ağ üzerinden bağlanır. TEI varsayılan olarak kimlik doğrulaması istemez; **8082 portunu güvenlik duvarıyla yalnızca web sunucusunun IP'sine açın** (örn. `ufw allow from WEB_SUNUCU_IP to any port 8082 proto tcp`). Sunucu internete açıksa ayrıca `--api-key GIZLI_DEGER` ekleyin ve aynı değeri panelde "Erişim anahtarı" alanına yazın.
 - `-v ~/embedding-data:/data`: model dosyaları burada saklanır; konteyner yeniden oluşturulunca yeniden indirilmez. İlk açılışta model indirildiği için hazır olması bir dakika kadar sürebilir.
-- Durum ve günlük: `docker logs -f embedding` (`Ready` satırını bekleyin). Sınama: `curl -s localhost:8082/embed -H 'Content-Type: application/json' -d '{"inputs":["passage: deneme"]}' | head -c 100`.
+- Durum ve günlük: `docker logs -f embedding` (`Ready` satırını bekleyin). Sınama (web sunucusundan): `curl -s http://TEI_SUNUCU_IP:8082/embed -H 'Content-Type: application/json' -d '{"inputs":["passage: deneme"]}' | head -c 100`.
 - Güncelleme ya da model değiştirme: `docker rm -f embedding` ve yukarıdaki komutu yeni `--model-id` ile yeniden çalıştırın.
 
-**Panelden etkinleştirme:** Yönetim → Ayarlar → *Embedding (yazım yardımcısı)*: sağlayıcı **TEI**, sunucu adresi `http://embedding:8082`, "Bağlantıyı sına" ile denedikten sonra Kaydet. Modelin gerektirdiği önekleri girin (E5 için `passage: ` ve `query: `; BGE-M3 için ikisi de boş). TEI seçiliyken kota beklemesi ve belge sırası sınırı uygulanmaz; hız sunucu gücüne bağlıdır. Daha fazla hız için aynı komutla farklı adlı ve portlu ek konteynerler çalıştırıp önlerine bir yük dağıtıcı koyabilirsiniz.
+**Panelden etkinleştirme:** Yönetim → Ayarlar → *Embedding (yazım yardımcısı)*: sağlayıcı **TEI**, sunucu adresi `http://TEI_SUNUCU_IP:8082`, "Bağlantıyı sına" ile denedikten sonra Kaydet. Modelin gerektirdiği önekleri girin (E5 için `passage: ` ve `query: `; BGE-M3 için ikisi de boş). TEI seçiliyken kota beklemesi ve belge sırası sınırı uygulanmaz; hız sunucu gücüne bağlıdır. Daha fazla hız için aynı komutla farklı adlı ve portlu ek konteynerler çalıştırıp önlerine bir yük dağıtıcı koyabilirsiniz.
 
-**Dikkat:** Farklı modellerin vektörleri karşılaştırılamaz (Gemini 768, e5-small 384 boyut). Sağlayıcıyı değiştirdiğinizde eski belgeler anahtar kelime aramasıyla aranmaya devam eder; anlamsal arama için onları yeniden ekleyin. Web konteyneri TEI'ye ulaşamıyorsa (farklı ağ), sunucu IP'siyle `http://SUNUCU_IP:8082` kullanın ve `-p 8082:8082` ile yayınlayın; bu durumda güvenlik duvarıyla yalnızca web sunucusuna izin verin.
+**Dikkat:** Farklı modellerin vektörleri karşılaştırılamaz (Gemini 768, e5-small 384 boyut). Sağlayıcıyı değiştirdiğinizde eski belgeler anahtar kelime aramasıyla aranmaya devam eder; anlamsal arama için onları yeniden ekleyin. Embedding istekleri web uygulamasından (LLM servisinden değil) gittiği için erişim yalnızca web sunucusundan TEI sunucusuna gerekir.
 
 ---
 
