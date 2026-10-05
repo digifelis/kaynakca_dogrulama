@@ -89,7 +89,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--ink); color: var(--paper); font: 600 17px/1 var(--text); }
 .page-navigation { display: flex; gap: 4px; height: 64px; align-items: stretch; }
 .page-navigation a { display: flex; align-items: center; padding: 0 12px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: 14px; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
-.page-navigation a.is-locked::after { content: "F512"; margin-left: 6px; font-size: 11px; opacity: .75; }
+.page-navigation a.is-locked::after { content: "\1F512"; margin-left: 6px; font-size: 11px; opacity: .75; }
 /* Areas the plan does not include: their controls disappear (auth-app.js lists the missing areas in data-no). */
 html[data-no~="export"] [data-feature="export"], html[data-no~="scholar"] [data-feature="scholar"], html[data-no~="web"] [data-feature="web"], html[data-no~="styles"] [data-feature="styles"] { display: none !important; }
 .page-navigation a:hover { color: var(--ink); }
