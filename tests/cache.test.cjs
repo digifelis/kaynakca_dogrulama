@@ -56,3 +56,19 @@ test('a cached record is a final result: the orchestrator reuses it without aski
   assert.deepEqual(asked, [1], 'only the reference that was not cached is looked up');
   assert.equal(emitted.filter(m => m.type === 'result').length, 2);
 });
+
+test('additional sources are tried right away even while Crossref is waiting for quota', async () => {
+  const calls = [];
+  const waits = [];
+  await Verification.orchestrate({
+    references: ['A'],
+    verify: async (i, options) => {
+      calls.push(options.primaryOnly ? 'primary' : 'fallback');
+      if (options.primaryOnly) return { raw: 'A', status: 'error', fallbackNeeded: true, pendingRetryAt: Date.now() + 600000 };
+      return { raw: 'A', status: 'verified', fallbackNeeded: false };
+    },
+    emit() {}, wait: async ms => { waits.push(ms); },
+  });
+  assert.deepEqual(calls, ['primary', 'fallback']);
+  assert.deepEqual(waits, []);
+});
