@@ -9,7 +9,7 @@ const { allowedTarget, createServer } = require('../server.cjs');
 const parsed = { title: 'A study of education', firstAuthor: 'Smith', year: 2020, doi: '', reference: 'Smith, A. (2020). A study of education.' };
 
 test('all requested sources have an explicit automated, keyed or manual status', () => {
-  for (const id of ['Crossref', 'arXiv', 'OpenAlex', 'PubMed', 'Europe PMC', 'DBLP', 'ERIC', 'Semantic Scholar', 'CORE', 'ISSN', 'TR Dizin', 'İSAM', 'SOBIAD', 'TO-KAT', 'Google Books', 'OpenLibrary']) {
+  for (const id of ['Crossref', 'arXiv', 'OpenAlex', 'PubMed', 'Europe PMC', 'ERIC', 'Semantic Scholar', 'CORE', 'ISSN', 'TR Dizin', 'İSAM', 'SOBIAD', 'TO-KAT', 'Google Books', 'OpenLibrary']) {
     assert.ok(providers.descriptors.find(provider => provider.id === id));
   }
   assert.equal(providers.descriptors.find(provider => provider.id === 'ISSN').mode, 'manual');
@@ -19,7 +19,8 @@ test('routing selects domain sources and requires configured Google Books key', 
   assert.ok(providers.route({ ...parsed, reference: 'Turizm araştırmaları Türkiye' }).includes('TR Dizin'));
   assert.ok(providers.route({ ...parsed, reference: 'aspirin clinical patient' }).includes('PubMed'));
   assert.ok(providers.route(parsed).includes('ERIC'));
-  assert.ok(providers.route({ ...parsed, reference: 'neural computer learning' }).includes('DBLP'));
+  assert.ok(!providers.route({ ...parsed, reference: 'neural computer learning' }).includes('DBLP'));
+  assert.equal(providers.route(parsed)[0], 'Semantic Scholar');
   assert.ok(!providers.route(parsed).includes('Google Books'));
   assert.ok(providers.route(parsed, { googleBooksConfigured: true }).includes('Google Books'));
   assert.deepEqual(providers.route({ ...parsed, arxiv: '2304.14163', reference: 'https://arxiv.org/abs/2304.14163' }), ['arXiv']);
@@ -78,9 +79,8 @@ test('PubMed retrieves batched summaries after ID search', async () => {
   assert.equal(item.doi, '10.1/test');
 });
 
-test('DBLP, ERIC and Semantic Scholar response adapters', async () => {
+test('ERIC and Semantic Scholar response adapters', async () => {
   const responses = {
-    DBLP: { result: { hits: { hit: { info: { title: parsed.title, year: '2020', authors: { author: { text: 'Alice Smith' } }, venue: 'Conf', url: 'https://dblp.org/rec/test' } } } } },
     ERIC: { response: { docs: [{ id: 'EJ123', title: parsed.title, author: ['Smith, Alice'], publicationdateyear: 2020 }] } },
     'Semantic Scholar': { data: [{ title: parsed.title, year: 2020, authors: [{ name: 'Alice Smith' }], externalIds: { DOI: '10.1/test' }, url: 'https://semanticscholar.org/paper/test' }] },
   };

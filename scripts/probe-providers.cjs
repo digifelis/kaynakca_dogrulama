@@ -1,7 +1,6 @@
 const endpoints = [
   ['PubMed', 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=aspirin&retmode=json&retmax=2'],
   ['Europe PMC', 'https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=TITLE:aspirin&format=json&resultType=core&pageSize=2'],
-  ['DBLP', 'https://dblp.org/search/publ/api?q=attention%20is%20all%20you%20need&format=json&h=2'],
   ['ERIC', 'https://api.ies.ed.gov/eric/?search=title:education&format=json&rows=2'],
   ['Semantic Scholar', 'https://api.semanticscholar.org/graph/v1/paper/search?query=attention%20is%20all%20you%20need&limit=2&fields=title,authors,year,externalIds,venue,url'],
   ['CORE', 'https://api.core.ac.uk/v3/search/works?q=title%3A%22Attention%20Is%20All%20You%20Need%22&limit=2'],

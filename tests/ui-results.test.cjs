@@ -149,3 +149,23 @@ test('Scholar buttons use encoded original title/author/year and appear only for
   assert.ok(!html.includes('<img'));
   assert.equal((html.match(/data-apply-suggestion=/g) || []).length, 1);
 });
+
+test('choosing IEEE or Vancouver rewrites the corrected bibliography in that style, numbered', async () => {
+  const engine = require('../reference-engine.js');
+  const { context, document, events } = fixture(engine);
+  const matched = { provider: 'Crossref', title: 'Deep learning', author: [{ family: 'LeCun', given: 'Yann' }], year: 2015, doi: '10.1038/nature14539', containerTitle: 'Nature', volume: '521', issue: '7553', pages: '436-444' };
+  context.rows = [{ ...result('LeCun, Y. (2015). Deep learning. Nature.', 'verified'), corrected: 'APA TEXT', matched }];
+  assert.equal(typeof events.get('#style-select:change'), 'function', 'style selector must be wired at load');
+  const select = document.querySelector('#style-select');
+  for (const [style, prefix] of [['ieee', '[1] '], ['vancouver', '1. ']]) {
+    select.value = style;
+    vm.runInContext('displayedResults = rows', context);
+    events.get('#style-select:change')();
+    const text = document.querySelector('#output-text').textContent;
+    assert.ok(text.startsWith(prefix), `${style}: ${text}`);
+    assert.ok(!text.includes('APA TEXT'));
+  }
+  select.value = 'apa';
+  events.get('#style-select:change')();
+  assert.equal(document.querySelector('#output-text').textContent, 'APA TEXT');
+});

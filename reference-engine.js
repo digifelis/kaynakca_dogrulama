@@ -212,7 +212,7 @@
           if (options.deferQuota) { const error = new ProviderError(provider, 429); error.retryAt = until; error.url = url; throw error; }
           await waitForQuota(provider, until - Date.now(), quotaAttempts.get(provider) || 1, signal, onRetry);
         }
-        const interval = provider === 'Crossref' ? (url.startsWith('https://api.crossref.org/works/') ? 200 : 1000) : ({ PubMed: 400, CORE: 2200, DBLP: 1100, OpenLibrary: 1100, 'Semantic Scholar': 1000 })[provider] || 400;
+        const interval = provider === 'Crossref' ? (url.startsWith('https://api.crossref.org/works/') ? 200 : 1000) : ({ PubMed: 400, CORE: 2200, OpenLibrary: 1100, 'Semantic Scholar': 1000 })[provider] || 400;
         await sleep(Math.max(0, interval - (Date.now() - (lastRequest.get(provider) || 0))), signal);
         lastRequest.set(provider, Date.now());
         const controller = new AbortController();
@@ -528,18 +528,21 @@
     } else {
       if (parsed.doi) {
         await attempt('Crossref', () => crossrefSearch(parsed, true));
-        if (!primaryUnavailable && !isStrong(ranked()[0]) && !crossrefFound()) await attempt('DataCite', () => dataciteLookup(parsed));
+        if (!isStrong(ranked()[0]) && !crossrefFound()) await attempt('DataCite', () => dataciteLookup(parsed));
       }
       if (parsed.idOnly) {
         // No cited text to search with: only direct identifier lookups apply.
-        if (!primaryUnavailable && !isStrong(ranked()[0])) await attempt('OpenAlex', () => openAlexSearch(parsed, true));
+        if (!isStrong(ranked()[0])) await attempt('OpenAlex', () => openAlexSearch(parsed, true));
       } else {
       // Missing/wrong DOI must not prevent a title search.
       if (!primaryUnavailable && !isStrong(ranked()[0]) && !crossrefFound()) await attempt('Crossref', () => crossrefSearch(parsed));
-      if (!primaryUnavailable && !settings.primaryOnly && !isStrong(ranked()[0]) && !crossrefFound()) await attempt('OpenAlex', () => openAlexSearch(parsed));
-      if (!primaryUnavailable && !settings.primaryOnly && additionalProviders && !isStrong(ranked()[0]) && !crossrefFound()) {
-        for (const id of additionalProviders.route(parsed, options)) {
-          if (id === 'Semantic Scholar' && !crossrefSucceeded) continue;
+      // Crossref gave no usable answer (not found, 403, 429): Semantic Scholar is the first fallback.
+      const extraIds = !settings.primaryOnly && additionalProviders ? additionalProviders.route(parsed, options) : [];
+      if (extraIds.includes('Semantic Scholar') && !isStrong(ranked()[0]) && !crossrefFound()) await attempt('Semantic Scholar', () => additionalProviders.search('Semantic Scholar', parsed, requestJson));
+      if (!settings.primaryOnly && !isStrong(ranked()[0]) && !crossrefFound()) await attempt('OpenAlex', () => openAlexSearch(parsed));
+      if (!settings.primaryOnly && additionalProviders && !isStrong(ranked()[0]) && !crossrefFound()) {
+        for (const id of extraIds) {
+          if (id === 'Semantic Scholar') continue;
           await attempt(id, () => additionalProviders.search(id, parsed, requestJson));
           if (isStrong(ranked()[0])) break;
         }
@@ -554,7 +557,7 @@
       const technical = warnings.length > 0;
       return { ...routing, raw: reference, status: technical ? 'error' : 'failed', statusText: technical ? 'Kontrol tamamlanamadı' : 'Bulunamadı',
         score: best?.score || 0, corrected: reference, provider: technical ? 'Servis hatası' : sourcesChecked.join(' / '), changes: [], warnings, sourcesChecked,
-        reason: technical ? `${warnings.join('; ')}.${primaryUnavailable ? ' Crossref geçici olarak erişilemiyor; ek kaynak sorguları bu nedenle başlatılmadı.' : ''} Kaynak özgün haliyle korundu; tekrar deneyebilirsiniz.` : (parsed.idOnly ? 'Bu tanımlayıcıyla kayıt bulunamadı. DOI veya arXiv numarasını kontrol edin.' : parsed.title ? 'Yeterince güçlü bir akademik eşleşme bulunamadı. Kaynak özgün haliyle korundu.' : 'Başlık ayrıştırılamadı ve yeterli eşleşme bulunamadı. Kaynağın yazımını kontrol edin.'), debugRequests };
+        reason: technical ? `${warnings.join('; ')}.${primaryUnavailable ? ' Crossref geçici olarak erişilemiyor; diğer kaynaklar denendi.' : ''} Kaynak özgün haliyle korundu; tekrar deneyebilirsiniz.` : (parsed.idOnly ? 'Bu tanımlayıcıyla kayıt bulunamadı. DOI veya arXiv numarasını kontrol edin.' : parsed.title ? 'Yeterince güçlü bir akademik eşleşme bulunamadı. Kaynak özgün haliyle korundu.' : 'Başlık ayrıştırılamadı ve yeterli eşleşme bulunamadı. Kaynağın yazımını kontrol edin.'), debugRequests };
     }
     const status = isStrong(best) ? 'verified' : 'review';
     if (parsed.idOnly) {

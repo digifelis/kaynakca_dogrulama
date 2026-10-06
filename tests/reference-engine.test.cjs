@@ -217,15 +217,14 @@ test('primary phase never queries extra sources for Crossref misses', async () =
   assert.equal(result.fallbackNeeded, true);
   assert.deepEqual(Array.from(result.sourcesChecked), ['Crossref']);
 });
-test('Crossref transient gateway failure does not cascade into every fallback provider', async () => {
-  const calls = [];
-  const engine = load(async url => { calls.push(url); return new Response('', { status: 502 }); });
-  engine.configure({ additionalProviders: { route: () => ['CORE'], search: () => { throw Error('must not query'); } } });
+test('Crossref transient gateway failure falls through to Semantic Scholar and the other sources', async () => {
+  const queried = [];
+  const engine = load(async () => new Response('', { status: 502 }));
+  engine.configure({ additionalProviders: { route: () => ['Semantic Scholar', 'CORE'], search: async id => { queried.push(id); return []; } } });
   const result = await engine.verifyReference(reference);
-  assert.equal(result.status, 'error');
-  assert.ok(result.warnings.every(warning => warning.startsWith('Crossref:')));
-  assert.ok(result.reason.includes('ek kaynak sorguları')); 
-  assert.equal(calls.every(url => url.includes('api.crossref.org')), true);
+  assert.deepEqual(queried, ['Semantic Scholar', 'CORE']);
+  assert.ok(result.sourcesChecked.includes('Semantic Scholar'));
+  assert.ok(result.warnings.some(warning => warning.startsWith('Crossref:')));
 });
 
 test('request scheduler respects five DOI requests/s and one search or Semantic Scholar request/s', async () => {

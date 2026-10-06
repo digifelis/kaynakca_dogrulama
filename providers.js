@@ -46,7 +46,6 @@
     { id: 'TR Dizin', name: 'TR Dizin', note: 'Türkçe akademik yayınlar', mode: 'auto' },
     { id: 'İSAM', name: 'İSAM', note: 'Tarih, kültür, ilahiyat makaleleri', mode: 'auto' },
     { id: 'ERIC', name: 'ERIC', note: 'Eğitim bilimleri', mode: 'auto' },
-    { id: 'DBLP', name: 'DBLP', note: 'Bilgisayar bilimleri; bot kontrolü erişimi engelleyebilir', mode: 'auto' },
     { id: 'Semantic Scholar', name: 'Semantic Scholar', note: 'Crossref’te eşleşmeyenler; en çok 1 istek/sn; isteğe bağlı API anahtarı', mode: 'auto' },
     { id: 'CORE', name: 'CORE', note: 'Açık erişim arşivleri; isteğe bağlı API anahtarı', mode: 'auto' },
     { id: 'OpenLibrary', name: 'OpenLibrary', note: 'Kitaplar; baskı bilgisi kullanıcı tarafından incelenir', mode: 'auto' },
@@ -62,9 +61,9 @@
     const ids = [];
     if (/[çğıöşü]|\b(turkiye|turizm|tarih|ilahiyat)\b/i.test(text)) ids.push('TR Dizin', 'İSAM');
     if (/pmid|pubmed|medicine|medical|clinical|health|cancer|patient|aspirin|diabetes|hast[aı]|sağlık|tıp/i.test(text)) ids.push('Europe PMC', 'PubMed');
-    if (/learning|computer|neural|algorithm|transformer|attention|acm|ieee|informatics/i.test(text)) ids.push('DBLP');
     if (/education|teaching|teacher|student|school|eğitim|öğret|öğrenci/i.test(text)) ids.push('ERIC');
-    ids.push('Semantic Scholar', 'CORE');
+    ids.unshift('Semantic Scholar');
+    ids.push('CORE');
     if (!parsed.doi) {
       ids.push('OpenLibrary');
       if (options.googleBooksConfigured) ids.push('Google Books');
@@ -105,12 +104,6 @@
       if (summaries?.error) throw Error(`${id}: özet servisi hatası`);
       return ids.map(uid => summaries?.result?.[uid]).filter(Boolean).map(raw => baseItem(id, raw.title, literalAuthors(raw.authors), raw.pubdate, `https://pubmed.ncbi.nlm.nih.gov/${raw.uid}/`,
         { doi: raw.articleids?.find(value => value.idtype === 'doi')?.value || '', containerTitle: raw.fulljournalname || raw.source || '', volume: raw.volume || '', issue: raw.issue || '', pages: raw.pages || '' }));
-    }
-    if (id === 'DBLP') {
-      const data = await request(id, `https://dblp.org/search/publ/api?q=${enc(title)}&format=json&h=5`);
-      return list(data?.result?.hits?.hit).map(hit => hit.info).filter(Boolean).map(raw => baseItem(id, raw.title,
-        literalAuthors(list(raw.authors?.author).map(author => typeof author === 'string' ? author : author.text || '')),
-        raw.year, raw.url || raw.ee || '', { doi: raw.doi || '', containerTitle: raw.venue || '', volume: raw.volume || '', issue: raw.number || '', pages: raw.pages || '' }));
     }
     if (id === 'ERIC') {
       const data = await request(id, `https://api.ies.ed.gov/eric/?search=${enc(`title:"${quoted}"`)}&format=json&rows=5`);

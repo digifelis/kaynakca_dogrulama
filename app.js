@@ -404,11 +404,7 @@ summaryStats.addEventListener('click', event => {
   const button = event.target.closest('[data-filter]');
   if (button) setResultFilter(button.dataset.filter);
 });
-clearButton.addEventListener('click', () => {
-  input.value = '';
-  displayedResults = [];
-  activeFilter = 'all';
-  // The style list follows the plan: Vancouver and IEEE belong to plans with that area (a visitor without an account is not held to a plan).
+// The style list follows the plan: Vancouver and IEEE belong to plans with that area (a visitor without an account is not held to a plan).
 function syncStyleAccess() {
   if (!styleSelect || !styleSelect.querySelectorAll) return;
   const allowed = typeof window === 'undefined' || !window.Auth?.hasFeature || window.Auth.hasFeature('styles');
@@ -427,7 +423,11 @@ if (styleSelect) {
 }
 if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('auth-change', syncStyleAccess);
 syncStyleAccess();
-updateCount();
+clearButton.addEventListener('click', () => {
+  input.value = '';
+  displayedResults = [];
+  activeFilter = 'all';
+  updateCount();
   input.focus();
   resultsSection.classList.add('hidden');
   outputSection.classList.add('hidden');

@@ -111,7 +111,6 @@ Ek kaynak aşamasında kota bekleyen kayıt ertelenir ve diğer kayıtlar kontro
 |---|---|
 | Crossref, DataCite, OpenAlex | İlk akademik kayıt araması |
 | PubMed, Europe PMC | Biyomedikal içerik algılandığında ek arama |
-| DBLP | Bilgisayar bilimleri; bot kontrolü otomatik erişimi engelleyebilir |
 | ERIC | Eğitim bilimleri |
 | TR Dizin, İSAM | Türkçe kayıtlar; İSAM arşiv önerileri ayrıca incelenir |
 | Semantic Scholar | Genel ek arama; anahtarsız kota sınırlı olabilir |
@@ -123,7 +122,7 @@ Ek kaynak aşamasında kota bekleyen kayıt ertelenir ve diğer kayıtlar kontro
 
 Güçlü eşleşme bulununca gereksiz sorgular durur. Her kartta gerçekten sorgulanan dizinler gösterilir. API adaptörünün bulunması o servisin her zaman erişilebilir olduğu anlamına gelmez; kota, erişim reddi ve JSON yerine bot kontrolü gelmesi ayrıca işaretlenir.
 
-30 Eylül 2026 canlı erişim kontrolünde PubMed, Europe PMC, ERIC, TR Dizin, İSAM, CORE ve OpenLibrary JSON yanıt verdi. DBLP HTML bot kontrolü, Semantic Scholar HTTP 429 ve anahtarsız Google Books HTTP 429 verdi. Bunlar o anki erişim durumlarıdır.
+30 Eylül 2026 canlı erişim kontrolünde PubMed, Europe PMC, ERIC, TR Dizin, İSAM, CORE ve OpenLibrary JSON yanıt verdi. Semantic Scholar HTTP 429 ve anahtarsız Google Books HTTP 429 verdi. Bunlar o anki erişim durumlarıdır.
 
 ## İsteğe bağlı anahtarlar
 
