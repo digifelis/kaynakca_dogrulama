@@ -2,12 +2,15 @@
 # Yalnızca verify çalışan sunucuda: kodu çeker, imajı yeniden derler, eski verify container'larını silip yenilerini başlatır.
 # Compose KULLANMAZ (bkz. KURULUM.md, bölüm 5 ve 5.1). Proje klasöründen veya herhangi bir yerden çalıştırılabilir.
 #
-#   ./scripts/update-verify.sh                          # kuyruk adresi ve adet, çalışan container'dan okunur
-#   QUEUE_URL=http://10.1.2.116:4180 ./scripts/update-verify.sh
-#   QUEUE_URL=http://10.1.2.116:4180 REPLICAS=2 ./scripts/update-verify.sh
+#   ./scripts/update-verify.sh                          # adres ve adet kendiliğinden bulunur
+#   QUEUE_URL=https://baska.adres ./scripts/update-verify.sh   # adresi değiştirmek için (bir kez; sonra hatırlanır)
+#   REPLICAS=2 ./scripts/update-verify.sh
+#
+# Kuyruk adresi şu sırayla belirlenir: QUEUE_URL değişkeni > services/verify/queue-url dosyası (bir önceki başarılı
+# çalıştırmadan) > çalışan verify container'ı > DEFAULT_QUEUE_URL. Kullanılan adres services/verify/queue-url'e yazılır.
 #
 # Ortam değişkenleri (hepsi isteğe bağlı):
-#   QUEUE_URL  Kuyruğun adresi. Verilmezse mevcut verify container'ından alınır.
+#   QUEUE_URL  Kuyruğun adresi (yukarıdaki sıra).
 #   REPLICAS   Başlatılacak container sayısı. Verilmezse mevcut sayı korunur (hiç yoksa 1).
 #   NAME       Container adı öneki (varsayılan: verify -> verify-1, verify-2, ...).
 #   IMAGE      İmaj adı (varsayılan: kaynakca-masasi/verify).
@@ -18,6 +21,8 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 NAME="${NAME:-verify}"
 IMAGE="${IMAGE:-kaynakca-masasi/verify}"
+DEFAULT_QUEUE_URL="http://kuyruk.kaldera.beu.edu.tr"
+QUEUE_FILE=services/verify/queue-url
 
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
@@ -33,11 +38,14 @@ ls keys/public/*.public.pem >/dev/null 2>&1 || ls keys/public/*.pem >/dev/null 2
 
 # --- Mevcut container'lardan kuyruk adresi ve adet ---
 existing=$(docker ps -a --format '{{.Names}}' | grep -E "^${NAME}-[0-9]+$" || true)
+if [ -z "${QUEUE_URL:-}" ] && [ -s "$QUEUE_FILE" ]; then
+  QUEUE_URL=$(head -n1 "$QUEUE_FILE" | tr -d '[:space:]')
+fi
 if [ -z "${QUEUE_URL:-}" ] && [ -n "$existing" ]; then
   first=$(echo "$existing" | head -n1)
   QUEUE_URL=$(docker inspect "$first" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^QUEUE_URL=//p' | head -n1)
 fi
-[ -n "${QUEUE_URL:-}" ] || die "QUEUE_URL bilinmiyor. Örnek: QUEUE_URL=http://10.1.2.116:4180 $0"
+QUEUE_URL="${QUEUE_URL:-$DEFAULT_QUEUE_URL}"
 if [ -z "${REPLICAS:-}" ]; then
   REPLICAS=$(printf '%s' "$existing" | grep -c . || true)
   [ "$REPLICAS" -ge 1 ] || REPLICAS=1
@@ -86,6 +94,10 @@ for i in $(seq 1 "$REPLICAS"); do
     -v "$ROOT/keys/private/verify.private.pem:/run/secrets/verify_key:ro" \
     "$IMAGE"
 done
+
+# Kullanılan adres bir sonraki çalıştırma için hatırlanır
+printf '%s
+' "$QUEUE_URL" > "$QUEUE_FILE"
 
 # --- Doğrulama ---
 say "Kontrol (5 sn bekleniyor)"

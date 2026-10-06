@@ -13,3 +13,5 @@ keys/
 # Servislerin kendi API anahtarları
 services/*/.env
 .env.yedek
+# update-verify.sh: bu sunucunun kuyruk adresi
+services/verify/queue-url
