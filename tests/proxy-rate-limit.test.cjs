@@ -19,11 +19,11 @@ test('proxy preserves HTML 429, shares cooldown across queries and resumes after
   const server = context.module.exports.createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
-    const endpoint = query => `http://127.0.0.1:${server.address().port}/api/proxy?provider=CORE&url=${encodeURIComponent('https://api.core.ac.uk/v3/search/works/?q=' + query)}`;
+    const endpoint = query => `http://127.0.0.1:${server.address().port}/api/proxy?provider=OpenLibrary&url=${encodeURIComponent('https://openlibrary.org/search.json?q=' + query)}`;
     const first = await fetch(endpoint('first'));
     assert.equal(first.status, 429);
     assert.equal(first.headers.get('retry-after'), '120');
-    assert.ok((await first.json()).error.includes('CORE'));
+    assert.ok((await first.json()).error.includes('OpenLibrary'));
     const blocked = await fetch(endpoint('second'));
     assert.equal(blocked.status, 429);
     assert.equal(calls, 1);

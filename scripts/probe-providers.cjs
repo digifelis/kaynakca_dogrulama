@@ -3,7 +3,6 @@ const endpoints = [
   ['Europe PMC', 'https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=TITLE:aspirin&format=json&resultType=core&pageSize=2'],
   ['ERIC', 'https://api.ies.ed.gov/eric/?search=title:education&format=json&rows=2'],
   ['Semantic Scholar', 'https://api.semanticscholar.org/graph/v1/paper/search?query=attention%20is%20all%20you%20need&limit=2&fields=title,authors,year,externalIds,venue,url'],
-  ['CORE', 'https://api.core.ac.uk/v3/search/works?q=title%3A%22Attention%20Is%20All%20You%20Need%22&limit=2'],
   ['TR Dizin', 'https://search.trdizin.gov.tr/api/defaultSearch/publication/?q=turizm&order=relevance-DESC&page=1&limit=10'],
   ['İSAM', 'https://makale.isam.org.tr/server/api/discover/search/objects?query=tasavvuf&size=2'],
   ['Google Books', 'https://www.googleapis.com/books/v1/volumes?q=intitle:start%20with%20why&maxResults=2'],

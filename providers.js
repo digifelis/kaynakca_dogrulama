@@ -47,7 +47,6 @@
     { id: 'İSAM', name: 'İSAM', note: 'Tarih, kültür, ilahiyat makaleleri', mode: 'auto' },
     { id: 'ERIC', name: 'ERIC', note: 'Eğitim bilimleri', mode: 'auto' },
     { id: 'Semantic Scholar', name: 'Semantic Scholar', note: 'Crossref’te eşleşmeyenler; en çok 1 istek/sn; isteğe bağlı API anahtarı', mode: 'auto' },
-    { id: 'CORE', name: 'CORE', note: 'Açık erişim arşivleri; isteğe bağlı API anahtarı', mode: 'auto' },
     { id: 'OpenLibrary', name: 'OpenLibrary', note: 'Kitaplar; baskı bilgisi kullanıcı tarafından incelenir', mode: 'auto' },
     { id: 'Google Books', name: 'Google Books', note: 'Kitaplar; sunucuda API anahtarı gerekli', mode: 'key' },
     { id: 'ISSN', name: 'ISSN', note: 'Dergi kimliği; tek başına makale kanıtı değildir', mode: 'manual', url: 'https://portal.issn.org/' },
@@ -63,7 +62,6 @@
     if (/pmid|pubmed|medicine|medical|clinical|health|cancer|patient|aspirin|diabetes|hast[aı]|sağlık|tıp/i.test(text)) ids.push('Europe PMC', 'PubMed');
     if (/education|teaching|teacher|student|school|eğitim|öğret|öğrenci/i.test(text)) ids.push('ERIC');
     ids.unshift('Semantic Scholar');
-    ids.push('CORE');
     if (!parsed.doi) {
       ids.push('OpenLibrary');
       if (options.googleBooksConfigured) ids.push('Google Books');
@@ -123,11 +121,6 @@
       }
       return values.map(raw => baseItem(id, raw.title, literalAuthors(raw.authors), raw.year, raw.url,
         { doi: raw.externalIds?.DOI || '', containerTitle: raw.journal?.name || raw.venue || '', volume: raw.journal?.volume || '', pages: raw.journal?.pages || '' }));
-    }
-    if (id === 'CORE') {
-      const data = await request(id, `https://api.core.ac.uk/v3/search/works/?q=${enc(`title:"${quoted}"`)}&limit=5`);
-      return (data?.results || []).map(raw => baseItem(id, raw.title, namedAuthors(raw.authors), raw.yearPublished,
-        `https://core.ac.uk/works/${raw.id}`, { doi: raw.doi || '', containerTitle: raw.journals?.[0]?.title || '', requiresReview: true }));
     }
     if (id === 'TR Dizin') {
       const data = await request(id, `https://search.trdizin.gov.tr/api/defaultSearch/publication/?q=${enc(title)}&order=relevance-DESC&page=1&limit=10`);

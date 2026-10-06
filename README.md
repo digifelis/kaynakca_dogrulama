@@ -26,7 +26,7 @@ tarayıcı ──> web (server.cjs) ──iş──> kuyruk (services/queue) <�
 ```
 
 - **Kuyruk** (`services/queue/server.cjs`, varsayılan port 4180): bağımlılıksız Node servisi. İki kuyruk vardır: `verify` (kaynak doğrulama) ve `llm` (atıf–kaynak değerlendirmesi, arama terimi üretimi, web kaynağı alan tamamlama). Boştaki servis işi long-poll ile çeker; iş her zaman boşta bekleyen servise gider. Servis düşerse iş, kiralama süresi dolunca başka servise verilir. Bekleyen işler `QUEUE_DATA_DIR` altındaki günlükte saklanır, kuyruk yeniden başlasa da kaybolmaz. Durdur, kuyruktaki işi iptal eder ve çalışan servisi durdurur.
-- **Doğrulama servisi** (`services/verify`): kaynak motorunu çalıştırır. İçerik kontrolü için yayının **tam metnini edinir**: Europe PMC, Unpaywall, Crossref bağlantıları ve kaynak adresi denenir, PDF'ler bu serviste Python ile okunur. Dizin ve tam metin anahtarlarını (OpenAlex, Semantic Scholar, CORE, Google Books, `UNPAYWALL_EMAIL`, `CROSSREF_MAILTO`…) **yalnızca kendi** `services/verify/.env` dosyasından okur. Her süreç aynı anda bir iş yapar; paralellik için birden çok kopya çalıştırın. Farklı IP'lerden ve farklı anahtarlarla çalışan kopyalar sağlayıcı kotalarını ayrı ayrı kullanır.
+- **Doğrulama servisi** (`services/verify`): kaynak motorunu çalıştırır. İçerik kontrolü için yayının **tam metnini edinir**: Europe PMC, Unpaywall, Crossref bağlantıları ve kaynak adresi denenir, PDF'ler bu serviste Python ile okunur. Dizin ve tam metin anahtarlarını (OpenAlex, Semantic Scholar, Google Books, `UNPAYWALL_EMAIL`, `CROSSREF_MAILTO`…) **yalnızca kendi** `services/verify/.env` dosyasından okur. Her süreç aynı anda bir iş yapar; paralellik için birden çok kopya çalıştırın. Farklı IP'lerden ve farklı anahtarlarla çalışan kopyalar sağlayıcı kotalarını ayrı ayrı kullanır.
 - **LLM servisi** (`services/llm`): Groq/OpenRouter anahtarlarını **yalnızca kendi** `services/llm/.env` dosyasından okur. Kota bekleme ve model yedekleme bu serviste yapılır.
 - **API anahtarları kuyruğa hiç girmez.** Ana proje bu modda anahtar tutmaz; tarayıcıya açık `/api/proxy` kapatılır.
 
@@ -114,7 +114,6 @@ Ek kaynak aşamasında kota bekleyen kayıt ertelenir ve diğer kayıtlar kontro
 | ERIC | Eğitim bilimleri |
 | TR Dizin, İSAM | Türkçe kayıtlar; İSAM arşiv önerileri ayrıca incelenir |
 | Semantic Scholar | Genel ek arama; anahtarsız kota sınırlı olabilir |
-| CORE | Açık erişim arşivlerinde ek arama; sonuçlar inceleme önerisidir |
 | OpenLibrary | DOI'siz kayıtlarda kitap önerileri; baskı/yıl kullanıcı kontrolü gerekir |
 | Google Books | Sunucuda API anahtarı varsa kitap önerileri |
 | ISSN | Dergi kimliği için manuel portal bağlantısı; makale varlığına kanıt sayılmaz |
@@ -122,11 +121,11 @@ Ek kaynak aşamasında kota bekleyen kayıt ertelenir ve diğer kayıtlar kontro
 
 Güçlü eşleşme bulununca gereksiz sorgular durur. Her kartta gerçekten sorgulanan dizinler gösterilir. API adaptörünün bulunması o servisin her zaman erişilebilir olduğu anlamına gelmez; kota, erişim reddi ve JSON yerine bot kontrolü gelmesi ayrıca işaretlenir.
 
-30 Eylül 2026 canlı erişim kontrolünde PubMed, Europe PMC, ERIC, TR Dizin, İSAM, CORE ve OpenLibrary JSON yanıt verdi. Semantic Scholar HTTP 429 ve anahtarsız Google Books HTTP 429 verdi. Bunlar o anki erişim durumlarıdır.
+30 Eylül 2026 canlı erişim kontrolünde PubMed, Europe PMC, ERIC, TR Dizin, İSAM ve OpenLibrary JSON yanıt verdi. Semantic Scholar HTTP 429 ve anahtarsız Google Books HTTP 429 verdi. Bunlar o anki erişim durumlarıdır.
 
 ## İsteğe bağlı anahtarlar
 
-`.env.example` dosyasını `.env` olarak kopyalayıp yalnız sahip olduğunuz anahtarları girin; ardından sunucuyu yeniden başlatın. OpenAlex, NCBI/PubMed, Semantic Scholar, CORE, Google Books ve Unpaywall için alanlar hazırdır. Unpaywall, `UNPAYWALL_EMAIL` alanında gerçek bir iletişim e-postası ister; bu alan boşsa `CROSSREF_MAILTO` kullanılır. Anahtarlar ve e-posta sunucuda tutulur; tarayıcıya yalnız yapılandırılmış olup olmadığı iletilir. `.env` web üzerinden sunulmaz.
+`.env.example` dosyasını `.env` olarak kopyalayıp yalnız sahip olduğunuz anahtarları girin; ardından sunucuyu yeniden başlatın. OpenAlex, NCBI/PubMed, Semantic Scholar, Google Books ve Unpaywall için alanlar hazırdır. Unpaywall, `UNPAYWALL_EMAIL` alanında gerçek bir iletişim e-postası ister; bu alan boşsa `CROSSREF_MAILTO` kullanılır. Anahtarlar ve e-posta sunucuda tutulur; tarayıcıya yalnız yapılandırılmış olup olmadığı iletilir. `.env` web üzerinden sunulmaz.
 
 Referans belgeler: [TR Dizin](https://development.trdizin.gov.tr/), [NCBI](https://www.ncbi.nlm.nih.gov/home/develop/api/), [ERIC](https://eric.ed.gov/pdf/Using_ERIC_API_for_Research_Topics.pdf), [Google Books](https://developers.google.com/books/docs/v1/reference/volumes/list), [OpenLibrary](https://openlibrary.org/dev/docs/api/search), [CORE](https://core.ac.uk/services/api).
 

@@ -212,7 +212,7 @@
           if (options.deferQuota) { const error = new ProviderError(provider, 429); error.retryAt = until; error.url = url; throw error; }
           await waitForQuota(provider, until - Date.now(), quotaAttempts.get(provider) || 1, signal, onRetry);
         }
-        const interval = provider === 'Crossref' ? (url.startsWith('https://api.crossref.org/works/') ? 200 : 1000) : ({ PubMed: 400, CORE: 2200, OpenLibrary: 1100, 'Semantic Scholar': 1000 })[provider] || 400;
+        const interval = provider === 'Crossref' ? (url.startsWith('https://api.crossref.org/works/') ? 200 : 1000) : ({ PubMed: 400, OpenLibrary: 1100, 'Semantic Scholar': 1000 })[provider] || 400;
         await sleep(Math.max(0, interval - (Date.now() - (lastRequest.get(provider) || 0))), signal);
         lastRequest.set(provider, Date.now());
         const controller = new AbortController();
@@ -352,7 +352,7 @@
     let converted = title.replace(/[\p{L}\p{N}]+(?:[-’'][\p{L}\p{N}]+)*/gu, (word, offset) => {
       const range = protectedRanges.find(entry => offset >= entry.start && offset + word.length <= entry.end);
       if (range) return range.name.slice(offset - range.start, offset - range.start + word.length);
-      const acronym = /^(?:APA|BERT|COVID(?:-19)?|GIS|LISA|MDIVis|TR\d+|IEEE|ERIC|DBLP|CORE|DOI)$/i.test(word) || (!allCaps && /^[\p{Lu}\d-]{2,8}$/u.test(word));
+      const acronym = /^(?:APA|BERT|COVID(?:-19)?|GIS|LISA|MDIVis|TR\d+|IEEE|ERIC|DOI)$/i.test(word) || (!allCaps && /^[\p{Lu}\d-]{2,8}$/u.test(word));
       const mixedCase = word.split(/[-’']/).some(part => /\p{Ll}.*\p{Lu}/u.test(part));
       if (acronym || mixedCase || (sentenceStyle && /^\p{Lu}/u.test(word))) return word;
       return word.toLocaleLowerCase(locale);

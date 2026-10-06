@@ -9,7 +9,7 @@ const { allowedTarget, createServer } = require('../server.cjs');
 const parsed = { title: 'A study of education', firstAuthor: 'Smith', year: 2020, doi: '', reference: 'Smith, A. (2020). A study of education.' };
 
 test('all requested sources have an explicit automated, keyed or manual status', () => {
-  for (const id of ['Crossref', 'arXiv', 'OpenAlex', 'PubMed', 'Europe PMC', 'ERIC', 'Semantic Scholar', 'CORE', 'ISSN', 'TR Dizin', 'İSAM', 'SOBIAD', 'TO-KAT', 'Google Books', 'OpenLibrary']) {
+  for (const id of ['Crossref', 'arXiv', 'OpenAlex', 'PubMed', 'Europe PMC', 'ERIC', 'Semantic Scholar', 'ISSN', 'TR Dizin', 'İSAM', 'SOBIAD', 'TO-KAT', 'Google Books', 'OpenLibrary']) {
     assert.ok(providers.descriptors.find(provider => provider.id === id));
   }
   assert.equal(providers.descriptors.find(provider => provider.id === 'ISSN').mode, 'manual');
@@ -110,9 +110,8 @@ test('İSAM preserves provenance and requires archive review', async () => {
   assert.ok(item.url.includes('/handle/'));
 });
 
-test('CORE, OpenLibrary and Google Books proposals require edition/archive review', async () => {
+test('OpenLibrary and Google Books proposals require edition/archive review', async () => {
   const responses = {
-    CORE: { results: [{ id: 123, title: parsed.title, authors: [{ name: 'Smith, Alice' }], yearPublished: 2020 }] },
     OpenLibrary: { docs: [{ key: '/works/OL123W', title: parsed.title, author_name: ['Alice Smith'], first_publish_year: 2020 }] },
     'Google Books': { items: [{ id: '123', volumeInfo: { title: parsed.title, authors: ['Alice Smith'], publishedDate: '2020-01-01', publisher: 'Publisher' } }] },
   };
@@ -133,12 +132,13 @@ test('fallback to extra provider is actually used and records search provenance'
   assert.equal(result.provider, 'ERIC');
   assert.ok(result.sourcesChecked.includes('ERIC'));
   assert.ok(!result.sourcesChecked.includes('CORE'));
+  assert.ok(!providers.descriptors.some(provider => provider.id === 'CORE' || provider.id === 'DBLP'));
 });
 
 test('proxy rejects local URLs, mismatched providers, credentials and unsafe protocols', () => {
   assert.ok(allowedTarget('PubMed', 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed'));
   for (const url of ['http://localhost/', 'https://127.0.0.1/', 'https://api.crossref.org.evil.test/works', 'https://name:pass@api.crossref.org/works', 'file:///etc/passwd', 'https://api.crossref.org:4173/works']) assert.equal(allowedTarget('Crossref', url), false);
-  assert.equal(allowedTarget('CORE', 'https://api.crossref.org/works'), false);
+  assert.equal(allowedTarget('PubMed', 'https://api.crossref.org/works'), false);
 });
 
 test('server exposes key availability but never keys or .env files', async () => {

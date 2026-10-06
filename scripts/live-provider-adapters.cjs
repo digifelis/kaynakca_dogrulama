@@ -7,7 +7,6 @@ const samples = [
   ['ERIC', 'Education! Education!', 'Dillon', 2006],
   ['TR Dizin', 'Türkiye’deki Konaklama İstatistiklerinin İllere Göre Mekânsal Analizi', 'Kervankıran', 2017],
   ['İSAM', 'Tasavvuf Edebiyatımızda Hikemmiyat', 'Göksoy', 2005],
-  ['CORE', 'Attention Is All You Need', 'Vaswani', 2017],
   ['OpenLibrary', 'Start with why', 'Sinek', 2009],
 ];
 (async () => {

@@ -1,5 +1,5 @@
 // Reference verification service: answers "verify" queue jobs with the reference engine.
-// Index API keys (OpenAlex, Semantic Scholar, CORE, ...) live only in this service's .env.
+// Index API keys (OpenAlex, Semantic Scholar, ...) live only in this service's .env.
 // The engine talks to an in-process proxy on 127.0.0.1 that adds those keys; web pages are
 // inspected here as well, and their missing fields are completed through the "llm" queue.
 const http = require('node:http');
