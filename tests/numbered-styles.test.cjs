@@ -179,3 +179,37 @@ test('writer: the project style is stored, needs the Vancouver / IEEE area, and 
     assert.equal(back.project.citationStyle, 'apa');
   } finally { await h.close(); }
 });
+
+// ---------------------------------------------------------------- MDPI
+test('MDPI: entry format, in-text ranges with an en dash, list number kept when the space is lost', () => {
+  const Styles = require('../citation-styles.js');
+  const item = { author: [{ family: 'Lewerenz', given: 'Meinert' }, { family: 'Sauer', given: 'Dirk Uwe' }], title: 'Aging of cells', keepTitle: true, containerTitle: 'Journal of Energy Storage', shortContainer: 'J. Energy Storage', year: '2018', volume: '18', issue: '3', pages: '149-159', doi: '10.1016/j.est.2018.04.029' };
+  const out = Styles.format(item, 'mdpi');
+  assert.equal(out.text, 'Lewerenz, M.; Sauer, D.U. Aging of cells. J. Energy Storage 2018, 18, 149–159. https://doi.org/10.1016/j.est.2018.04.029');
+  assert.match(out.html, /<em>J\. Energy Storage<\/em> 2018, <em>18<\/em>/);
+  assert.equal(Styles.citationGroup('mdpi', [1, 2, 3, 5]), '[1–3,5]');
+  assert.equal(N.splitLabel('24.Xiong, D.J.; Petibon, R. Title.').number, 24);
+});
+
+test('MDPI is detected from "Surname, A.B.;" entries and not mistaken for Vancouver or APA', () => {
+  const list = raws => raws.map((raw, i) => ({ id: 'r' + i, ...N.splitLabel(raw) })).map(r => ({ ...r, raw: r.body, number: r.number, labelForm: r.form }));
+  const mdpi = list(['1. Lewerenz, M.; Sauer, D.U. Title one. J. Power Sources 2017, 345, 254–263.', '2. Keil, P.; Jossen, A. Title two. J. Electrochem. Soc. 2016, 163, A1872.', '3. Ecker, M.;Nieto, N. Title three. J. Power Sources 2014, 248, 839–851.']);
+  assert.equal(N.detectStyle([], mdpi, { start: -1, end: -1 }), 'mdpi');
+  const vancouver = list(['1. Zhang K, Lee MJ. Mapping images. J Imaging. 2020;1:1-2.', '2. Kaya A, Demir B. Cells. Lancet. 2019;3:4-9.']);
+  assert.equal(N.detectStyle([], vancouver, { start: -1, end: -1 }), 'vancouver');
+  assert.deepEqual(N.entryProblems('Lewerenz, M.; Sauer, D.U. Title. J. Power Sources 2017, 345, 254–263.', 'mdpi'), []);
+  assert.ok(N.entryProblems('Zhang K, Lee MJ. Mapping images. J Imaging. 2020;1:1-2.', 'mdpi').length);
+  assert.ok(N.entryProblems('Lewerenz, M. (2018). Title. Journal, 18, 1-2.', 'mdpi').length);
+});
+
+test('a group citation links every number to its own source (no false orphan sources)', () => {
+  const p = (index, text) => ({ id: 'word/document.xml:' + index, part: 'word/document.xml', index, text, style: '', group: 'word/document.xml', protected: false });
+  const paragraphs = [p(0, 'Önceki çalışmalar [1,3–4] bunu gösterdi.'), p(1, 'Kaynakça'), p(2, '1. Lewerenz, M.; Sauer, D.U. A. J. Power Sources 2017, 1, 1–2.'), p(3, '2. Keil, P.; Jossen, A. B. J. Power Sources 2016, 2, 1–2.'), p(4, '3. Ecker, M.; Nieto, N. C. J. Power Sources 2014, 3, 1–2.'), p(5, '4. Li, D.; Gao, L. D. J. Power Sources 2015, 4, 1–2.')];
+  const references = [2, 3, 4, 5].map((index, i) => ({ id: 'r' + i, raw: paragraphs[index].text.slice(3), number: i + 1, prefix: `${i + 1}. `, labelForm: 'dot', paragraphs: [paragraphs[index].id], protected: false }));
+  const s = { id: 'x', owner: null, mode: 'word', format: 'docx', paragraphs, references, range: { start: 2, end: 5 }, headings: [1], styleAuto: false, citationStyle: 'mdpi',
+    applied: new Map(), appliedGroups: new Map(), manualConfirmed: new Set(), manualMappings: new Map(), contextOverrides: new Map(), content: {}, texts: {} };
+  Service.rebuild(s);
+  const orphans = s.findings.filter(f => f.id.startsWith('orphan-')).map(f => f.reference);
+  assert.deepEqual(orphans, ['r1'], 'only source 2 is really uncited');
+  assert.deepEqual(s.citations.map(c => c.reference), ['r0', 'r2', 'r3']);
+});

@@ -56,7 +56,7 @@
             <button id="word-verify" class="copy-button btn-primary" type="button">Kaynakları doğrula</button>
             <button id="word-content" class="copy-button btn-secondary" type="button">İçerik kontrolünü başlat</button>
             <button id="word-stop" class="text-button btn-quiet" type="button">Durdur</button>
-            <label class="word-style">Atıf stili <select id="word-style" aria-label="Atıf stili"><option value="auto">Otomatik</option><option value="apa">APA 7 (yazar–yıl)</option><option value="vancouver">Vancouver [1]</option><option value="ieee">IEEE [1]</option></select></label>
+            <label class="word-style">Atıf stili <select id="word-style" aria-label="Atıf stili"><option value="auto">Otomatik</option><option value="apa">APA 7 (yazar–yıl)</option><option value="vancouver">Vancouver [1]</option><option value="ieee">IEEE [1]</option><option value="mdpi">MDPI [1]</option></select></label>
             <span class="action-spacer" aria-hidden="true"></span>
             <button id="word-download" data-feature="export" class="copy-button btn-secondary" type="button">Nihai Word dosyasını indir</button>
             <button id="word-report" data-feature="export" class="text-button btn-quiet" type="button">Raporu indir</button>
@@ -126,7 +126,7 @@
             <button hidden id="content-verify" class="copy-button btn-secondary" type="button">Kaynakları doğrula</button>
             <button hidden id="content-content" class="copy-button btn-secondary" type="button">Atıfları kontrol et</button>
             <button id="content-stop" class="text-button btn-quiet" type="button">Durdur</button>
-            <label class="word-style">Atıf stili <select id="content-style" aria-label="Atıf stili"><option value="auto">Otomatik</option><option value="apa">APA 7 (yazar–yıl)</option><option value="vancouver">Vancouver [1]</option><option value="ieee">IEEE [1]</option></select></label>
+            <label class="word-style">Atıf stili <select id="content-style" aria-label="Atıf stili"><option value="auto">Otomatik</option><option value="apa">APA 7 (yazar–yıl)</option><option value="vancouver">Vancouver [1]</option><option value="ieee">IEEE [1]</option><option value="mdpi">MDPI [1]</option></select></label>
             <span class="action-spacer" aria-hidden="true"></span>
             <button id="content-download" data-feature="export" class="copy-button btn-secondary" type="button">Nihai Word dosyasını indir</button>
             <button id="content-report" data-feature="export" class="text-button btn-quiet" type="button">Raporu indir</button>
@@ -193,7 +193,7 @@
             <div class="wr-row wr-project-row">
               <label class="wr-field wr-project-select">Proje<select id="wr-project" aria-label="Proje"></select></label>
               <label class="wr-field wr-language">Makale dili<select id="wr-language" aria-label="Makale dili"><option value="tr">Türkçe</option><option value="en">English</option></select></label>
-              <label class="wr-field wr-language">Atıf stili<select id="wr-citation-style" aria-label="Atıf stili"><option value="apa">APA 7</option><option value="vancouver">Vancouver</option><option value="ieee">IEEE</option></select></label>
+              <label class="wr-field wr-language">Atıf stili<select id="wr-citation-style" aria-label="Atıf stili"><option value="apa">APA 7</option><option value="vancouver">Vancouver</option><option value="ieee">IEEE</option><option value="mdpi">MDPI</option></select></label>
               <button id="wr-new" class="copy-button btn-secondary" type="button">Yeni proje</button><button id="wr-rename" class="text-button btn-quiet" type="button">Adını değiştir</button><button id="wr-delete" class="text-button btn-danger" type="button">Projeyi sil</button>
             </div>
             <form id="wr-title-form" class="wr-row" hidden><input id="wr-title-input" type="text" maxlength="120" aria-label="Proje adı" placeholder="Proje adı"><button class="copy-button btn-primary" type="submit">Kaydet</button><button id="wr-title-cancel" class="text-button btn-quiet" type="button">Vazgeç</button></form>
@@ -301,7 +301,7 @@
               <select id="style-select">
                 <option value="apa">APA 7</option>
                 <option value="vancouver">Vancouver</option>
-                <option value="ieee">IEEE</option>
+                <option value="ieee">IEEE</option><option value="mdpi">MDPI</option>
               </select>
             </span>
             <button id="verify-button" class="primary-button" type="button">Doğrula ve düzelt</button>

@@ -100,7 +100,7 @@
   function renderStyle() {
     if (!S.data) return;
     const allowed = !window.Auth?.hasFeature || window.Auth.hasFeature('styles'), select = $('citation-style');
-    for (const option of select.options) if (option.value !== 'apa') { option.disabled = !allowed; option.textContent = (option.value === 'ieee' ? 'IEEE' : 'Vancouver') + (allowed ? '' : ' (paketinizde yok)'); }
+    for (const option of select.options) if (option.value !== 'apa') { option.disabled = !allowed; option.textContent = ({ ieee: 'IEEE', mdpi: 'MDPI' }[option.value] || 'Vancouver') + (allowed ? '' : ' (paketinizde yok)'); }
     select.value = styleOf();
   }
   function renderAll() { renderLanguage(); renderStyle(); renderPicker(); renderMessages(); refreshCitations(); renderBibliography(); renderUsage(); }
@@ -415,7 +415,7 @@
       S.data.project.citationStyle = citationStyle;
       refreshCitations();
       if ($('editor').querySelector('[data-bibliography]')) insertBibliography(); else { renderBibliography(); changed(); }
-      say(citationStyle === 'apa' ? 'Atıflar APA 7 yazar–yıl biçiminde.' : `Atıflar ${citationStyle === 'ieee' ? 'IEEE' : 'Vancouver'} biçiminde numaralandı; kaynakça atıf sırasına göre dizilir.`, 'ok');
+      say(citationStyle === 'apa' ? 'Atıflar APA 7 yazar–yıl biçiminde.' : `Atıflar ${{ ieee: 'IEEE', mdpi: 'MDPI' }[citationStyle] || 'Vancouver'} biçiminde numaralandı; kaynakça atıf sırasına göre dizilir.`, 'ok');
     } catch (error) { fail(error); renderStyle(); }
   });
   window.addEventListener('auth-change', renderStyle);

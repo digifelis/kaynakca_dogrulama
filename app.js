@@ -18,7 +18,7 @@ const stopButton = document.querySelector('#stop-button');
 const retryButton = document.querySelector('#retry-button');
 const styleSelect = document.querySelector('#style-select');
 // APA, Vancouver or IEEE: the verified records are kept as structured data, so the style can change without verifying again.
-const STYLE_KEY = 'kaynakca-style', STYLE_NAMES = { apa: 'APA 7', vancouver: 'Vancouver', ieee: 'IEEE' };
+const STYLE_KEY = 'kaynakca-style', STYLE_NAMES = { apa: 'APA 7', vancouver: 'Vancouver', ieee: 'IEEE', mdpi: 'MDPI' };
 let activeStyle = 'apa';
 try { const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STYLE_KEY) : null; if (saved in STYLE_NAMES) activeStyle = saved; } catch { /* storage unavailable: APA */ }
 let runController = null;
@@ -110,8 +110,8 @@ function outputReference(result) {
   if (result.appliedSuggestion) return result.appliedSuggestion;
   return { text: shown.corrected, html: shown.correctedHtml };
 }
-// Numbered styles list the references in order: "1." (Vancouver) or "[1]" (IEEE).
-const listPrefix = index => activeStyle === 'ieee' ? `[${index + 1}] ` : activeStyle === 'vancouver' ? `${index + 1}. ` : '';
+// Numbered styles list the references in order: "1." (Vancouver, MDPI) or "[1]" (IEEE).
+const listPrefix = index => activeStyle === 'ieee' ? `[${index + 1}] ` : activeStyle === 'vancouver' || activeStyle === 'mdpi' ? `${index + 1}. ` : '';
 
 function applySuggestion(index) {
   if (!Number.isInteger(index)) return;

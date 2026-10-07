@@ -10,16 +10,16 @@ function createWordWorkspace(prefix,mode) {
     $('inspection')?.addEventListener('close',()=>{inspectedCitation=null;});
   }
   const selectedChecks=()=>Object.fromEntries(['references','citations','llm'].map(key=>[key,$('check-'+key)?.checked!==false]));
-  // Citation style of the document: detected from the numbering, or chosen here. Vancouver and IEEE belong to plans with that area.
-  const STYLE_LABELS={apa:'APA 7',vancouver:'Vancouver',ieee:'IEEE'};
+  // Citation style of the document: detected from the numbering, or chosen here. Vancouver, IEEE and MDPI belong to plans with that area.
+  const STYLE_LABELS={apa:'APA 7',vancouver:'Vancouver',ieee:'IEEE',mdpi:'MDPI'};
   $('style')?.addEventListener?.('change',()=>action('style',{style:$('style').value}));
   function renderStyle(){
     const select=$('style');if(!select||!select.options||!state)return;
     const allowed=!window.Auth?.hasFeature||window.Auth.hasFeature('styles');
-    for(const option of select.options){if(option.value==='vancouver'||option.value==='ieee'){option.disabled=!allowed;option.textContent=STYLE_LABELS[option.value]+' [1]'+(allowed?'':' (paketinizde yok)');}}
+    for(const option of select.options){if(option.value==='vancouver'||option.value==='ieee'||option.value==='mdpi'){option.disabled=!allowed;option.textContent=STYLE_LABELS[option.value]+' [1]'+(allowed?'':' (paketinizde yok)');}}
     select.options[0].textContent=`Otomatik (algılanan: ${STYLE_LABELS[state.citationStyle]||'APA 7'})`;
     select.value=state.styleAuto===false?state.citationStyle:'auto';
-    select.disabled=busy||!!state.job?.running;
+    select.disabled=busy||(!!state.job?.running&&state.job.kind!=='references');
   }
   if(isContent)$('runchecks')?.addEventListener('click',()=>action('runchecks',{checks:selectedChecks()}));
   const paragraphDrafts=new Map();let saveTimer,saveTask=null;

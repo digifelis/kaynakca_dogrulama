@@ -53,10 +53,10 @@ function customReference(s,id,text){
 }
 // Patches that are written into the DOCX; report-only acceptances never reach the file.
 function documentPatches(s){return [...s.applied.values()].filter(p=>!p.reportOnly);}
-// The citation style of the document: chosen by the user, or read from a numbered list / numbered citations. Vancouver and IEEE belong to plans with that area.
+// The citation style of the document: chosen by the user, or read from a numbered list / numbered citations. Vancouver, IEEE and MDPI belong to plans with that area.
 function resolveStyle(s){
   if(!canUse(s.owner,'styles'))return 'apa';
-  if(s.styleAuto===false&&['apa','vancouver','ieee'].includes(s.citationStyle))return s.citationStyle;
+  if(s.styleAuto===false&&['apa','vancouver','ieee','mdpi'].includes(s.citationStyle))return s.citationStyle;
   return Analysis.detectStyle(s.paragraphs,s.references,s.range||{start:-1,end:-1});
 }
 function rebuild(s){
@@ -73,7 +73,7 @@ function rebuild(s){
   s.citations=base.citations.map(c=>{
     let pos=c.start;
     for(const patch of [...s.applied.values()].filter(p=>p.paragraph===c.paragraph&&p.start<c.start))pos+=patch.replacement.length-(patch.end-patch.start);
-    const current=effective.citations.find(e=>e.paragraph===c.paragraph&&e.start===pos);
+    const current=effective.citations.find(e=>e.paragraph===c.paragraph&&e.start===pos&&e.number===c.number);
     return {...c,...(current?{reference:current.reference,candidate:current.candidate,context:current.context,sentence:current.sentence,year:current.year,issue:current.issue,text:current.text,authors:current.authors,authorText:current.authorText}:{}),effectiveId:current?.id||c.id,content:s.content[c.id]};
   });
   s.findings=effective.findings.map(f=>{
@@ -361,9 +361,10 @@ async function handle(req,res,url,json){
       else s.job={running:false,kind:'citations',message:'Metin içi atıf kontrolü tamamlandı',completed:s.citations.length,total:s.citations.length};
     }
     else if(action==='style'){
-      if(s.job.running||s.referenceJob?.running)throw Error('Önce devam eden denetimi durdurun.');
-      const style=String(input.style||'');if(!['auto','apa','vancouver','ieee'].includes(style))throw Error('Atıf stili otomatik, APA, Vancouver veya IEEE olmalıdır.');
-      if(style==='vancouver'||style==='ieee')allow(s.owner,'styles');
+      // Reference verification keeps running: it does not depend on the citation style, and every result is restyled by rebuild().
+      if(s.job.running&&s.job.kind!=='references')throw Error('Önce devam eden denetimi durdurun.');
+      const style=String(input.style||'');if(!['auto','apa','vancouver','ieee','mdpi'].includes(style))throw Error('Atıf stili otomatik, APA, Vancouver, IEEE veya MDPI olmalıdır.');
+      if(style==='vancouver'||style==='ieee'||style==='mdpi')allow(s.owner,'styles');
       s.styleAuto=style==='auto';if(style!=='auto')s.citationStyle=style;
       s.content={};s.manualMappings.clear();rebuild(s);
     }

@@ -84,6 +84,9 @@ function extractReferences(paragraphs, range) {
   if (!range && start >= 0) {
     const next = main.find(p => p.index >= start && (heading(p) || /^(ekler|appendix|appendices)\b/i.test(p.text.trim())));
     if (next) end = next.index - 1;
+    // MDPI closes the list with "Disclaimer/Publisher’s Note: …" (several PDF lines); it is not a reference.
+    const note = main.find(p => p.index >= start && p.index <= end && /^(?:disclaimer|publisher[’']?s note)\b/i.test(p.text.trim()));
+    if (note) end = note.index - 1;
   }
   const refs = [];
   for (const p of main.filter(p => p.index >= start && p.index <= end && p.text.trim())) {
@@ -173,7 +176,7 @@ function distance(a,b) {
   for(let i=1;i<=a.length;i++) for(let j=1;j<=b.length;j++) rows[i][j]=Math.min(rows[i-1][j]+1,rows[i][j-1]+1,rows[i-1][j-1]+(a[i-1]!==b[j-1]));
   return rows[a.length][b.length];
 }
-// options.style: 'apa' (author–year, the default), 'vancouver' or 'ieee' (numbered citations).
+// options.style: 'apa' (author–year, the default), 'vancouver', 'ieee' or 'mdpi' (numbered citations).
 function analyze(paragraphs, references, range, options = {}) {
   const numeric = Numeric.isNumeric(options.style);
   const citations = [], findings = [], matched = new Set(), history = new Map();
@@ -208,7 +211,7 @@ function analyze(paragraphs, references, range, options = {}) {
         if(fuzzy.length===1) { c.candidate=fuzzy[0].id; matched.add(fuzzy[0].id); c.issue='Olası yazar yazım uyuşmazlığı; yayın kimliğini kontrol edin.';
           const suffix=c.authorText.match(/\s+(?:et\s+al\.|vd\.|ve\s+ark\.?|ve\s+diğerleri)\s*$/i)?.[0]||'';
           if(fuzzy[0].year!==c.year)c.reviewReason=`Kaynakçadaki kayıt ${fuzzy[0].year||'tarihsiz'} yılıyla yer alıyor; metin içi yılı (${c.year}) da kontrol edin.`;
-          c.patch={paragraph:p.id,start:c.authorStart,end:c.authorEnd,original:c.authorText,replacement:c.authors.length>1&&c.authors.length===fuzzy[0].authors.length&&!suffix?c.authorText.replace(new RegExp('^'+escaped(c.authorText.split(/\s*(?:,|&|ve|and)\s*/)[0])),fuzzy[0].author):fuzzy[0].author+suffix}; }
+          c.patch={paragraph:p.id,start:c.authorStart,end:c.authorEnd,original:c.authorText,replacement:c.authors.length>1&&c.authors.length===fuzzy[0].authors.length&&!suffix?c.authorText.replace(new RegExp('^'+escaped(c.authorText.split(/\s*(?:,|&|\bve\b|\band\b)\s*/)[0])),fuzzy[0].author):fuzzy[0].author+suffix}; }
         else c.issue='Kaynakçası olmayan atıf';
       }
       if(ref) {
@@ -242,6 +245,6 @@ function isTurkish(text) {
  const en=words.filter(w=>['the','a','and','of','in','to','for','is','this','with','study','according'].includes(w)).length;
  return tr>en || (tr===en && /[çğıöşü]/i.test(text));
 }
-// The style a document is written in: 'apa', 'vancouver' or 'ieee' (from a numbered list or numbered citations).
+// The style a document is written in: 'apa', 'vancouver', 'ieee' or 'mdpi' (from a numbered list or numbered citations).
 const detectStyle=(paragraphs,references,range)=>Numeric.detectStyle(paragraphs,references,range,p=>citationsIn(p,references).length);
 module.exports={detectStyle,isTurkish,extractReferences,referenceIdentity,citationsIn,analyze,sentences,publicationKeys};

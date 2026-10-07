@@ -517,7 +517,7 @@ function createService(options = {}) {
             const input = await readBody(req, 16 * 1024);
             if (input.language !== undefined) { if (!['tr', 'en'].includes(input.language)) throw httpError(400, 'Makale dili Türkçe (tr) veya İngilizce (en) olmalıdır.'); db().setProjectLanguage(userId, projectId, input.language); }
             if (input.citationStyle !== undefined) {
-              if (!['apa', 'vancouver', 'ieee'].includes(input.citationStyle)) throw httpError(400, 'Atıf stili APA, Vancouver veya IEEE olmalıdır.');
+              if (!['apa', 'vancouver', 'ieee', 'mdpi'].includes(input.citationStyle)) throw httpError(400, 'Atıf stili APA, Vancouver, IEEE veya MDPI olmalıdır.');
               if (input.citationStyle !== 'apa') need('styles');
               db().setProjectCitationStyle(userId, projectId, input.citationStyle);
             }

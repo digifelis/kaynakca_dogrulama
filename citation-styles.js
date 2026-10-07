@@ -1,4 +1,4 @@
-/* Vancouver (NLM / ICMJE) and IEEE reference formatting, shared by the browser and Node.
+/* Vancouver (NLM / ICMJE), IEEE and MDPI reference formatting, shared by the browser and Node.
    One bibliographic record (the shape the reference engine and the writing assistant both use) goes in; text, italic-marked HTML and notes come out.
    Numbered styles list the references in the order they are first cited, so the list number is added by the caller ("1." / "[1]"). */
 (function (root) {
@@ -37,12 +37,15 @@
     return letters.map(letter => letter.toLocaleUpperCase('tr'));
   }
   const vancouverName = name => name.literal || (name.family + (initialsOf(name.given).length ? ' ' + initialsOf(name.given).join('') : ''));
+  // MDPI: "Sauer, D.U." (family name, initials with periods, no space between them); every author is listed.
+  const mdpiName = name => name.literal || (name.family + (initialsOf(name.given).length ? ', ' + initialsOf(name.given).map(i => i + '.').join('') : ''));
   const ieeeName = name => name.literal || ((initialsOf(name.given).length ? initialsOf(name.given).map(i => i + '.').join(' ') + ' ' : '') + name.family);
   function people(item) { return (item.author || []).map(person).filter(Boolean); }
   function vancouverAuthors(item) {
     const list = people(item).map(vancouverName);
     return list.length > VANCOUVER_AUTHOR_LIMIT ? list.slice(0, VANCOUVER_AUTHOR_LIMIT).join(', ') + ', et al.' : list.join(', ');
   }
+  const mdpiAuthors = item => people(item).map(mdpiName).join('; ');
   function ieeeAuthors(item) {
     const list = people(item).map(ieeeName);
     if (list.length > IEEE_AUTHOR_LIMIT) return list[0] + ' et al.';
@@ -89,6 +92,7 @@
     return /^\p{L}?\d+–\p{L}?\d+$/u.test(text) ? 'pp. ' + text : /^\d+$/.test(text) ? 'p. ' + text : text;
   }
   const MONTHS_EN = ['Jan.', 'Feb.', 'Mar.', 'Apr.', 'May', 'Jun.', 'Jul.', 'Aug.', 'Sep.', 'Oct.', 'Nov.', 'Dec.'];
+  const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const MONTHS_NLM = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const ordinal = value => { const n = Number(value); if (!Number.isInteger(n) || n < 1) return clean(value).replace(/\.$/, ''); const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
   const edition = item => { const text = clean(item.edition); return text && Number(text) > 1 ? `${ordinal(text)} ed.` : /ed\.?$/i.test(text) ? text.replace(/\.?$/, '.') : text ? text + ' ed.' : ''; };
@@ -204,8 +208,52 @@
     return { text: b.text(), html: b.html(), parts: b.parts, notes, style: 'ieee' };
   }
 
-  const STYLES = { vancouver, ieee };
-  const isNumeric = style => style === 'vancouver' || style === 'ieee';
+
+  // ---- MDPI (numbered, ACS-based): Authors. Title. Journal Year, Volume, Pages.
+  // The journal and the volume are italic; the year is bold in the printed style, which this plain/italic output cannot carry (a note says so).
+  function mdpi(item, helpers = {}, options = {}) {
+    const b = Builder(), notes = [], kind = typeOf(item), authors = mdpiAuthors(item);
+    const year = clean(item.year), doi = clean(item.doi).replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '');
+    const mdpiPages = pages => dash(pages).replace(/-/g, '–');
+    const place = clean(item.place), publisher = clean(item.publisher || (kind === 'report' ? item.containerTitle : ''));
+    const imprint = pieces => pieces.filter(Boolean).join('; ');
+    if (authors) b.add(endWithStop(authors) + ' ');
+    else notes.push('Yazar bilgisi bulunamadı');
+    const title = kind === 'book' || kind === 'report' ? clean(item.title).replace(/[.]+$/, '') : articleTitle(item, helpers);
+    if (kind === 'web') {
+      const t = todayParts(options.today);
+      b.add(`${endWithStop(title)} Available online: ${clean(item.url)} (accessed on ${t.day} ${MONTHS_FULL[t.month]} ${t.year}).`);
+    } else if (kind === 'preprint') {
+      b.add(endWithStop(title) + ' ');
+      b.add('arXiv', true);
+      b.add(` ${year || 'n.d.'}, arXiv:${item.arxiv}.`);
+    } else if (kind === 'book' || kind === 'report') {
+      b.add(title, true);
+      const ed = edition(item); if (ed) b.add(', ' + ed.replace(/\.$/, '') + '.');
+      b.add('; ' + (imprint([place && publisher ? `${publisher}: ${place}` : publisher || place, year || 'n.d.']).replace('; ', ', ')) + (item.pages ? `; pp. ${mdpiPages(item.pages)}` : '') + '.');
+    } else if (kind === 'chapter' || kind === 'conference') {
+      b.add(endWithStop(title) + ' In ');
+      b.add(clean(item.containerTitle), true);
+      b.add('; ' + imprint([kind === 'chapter' && publisher ? (place ? `${publisher}: ${place}` : publisher) : place, year || 'n.d.']).replace('; ', ', ') + (item.pages ? `; pp. ${mdpiPages(item.pages)}` : '') + '.');
+    } else {
+      b.add(endWithStop(title) + ' ');
+      const journal = journalAbbreviation(item, { periods: true });
+      if (journal.text) {
+        b.add(journal.text, true);
+        if (journal.source !== 'registered' && clean(item.containerTitle).split(' ').length > 1) notes.push(journal.source === 'rule' ? 'Dergi kısaltması başlık sözcüklerinden üretildi; MDPI/ACS kısaltma listesiyle karşılaştırın' : 'Dergi kısaltması bulunamadı; tam ad kullanıldı');
+      }
+      b.add((journal.text ? ' ' : '') + (year || 'n.d.'));
+      if (item.volume) { b.add(', '); b.add(clean(item.volume), true); }
+      if (item.pages) b.add(', ' + mdpiPages(item.pages));
+      b.add('.');
+    }
+    if (doi && kind !== 'web') b.add(` https://doi.org/${doi}`);
+    if (kind === 'article' && year) notes.push('MDPI biçiminde yıl kalın yazılır; bu önerideki yılı elle kalın yapın');
+    return { text: b.text(), html: b.html(), parts: b.parts, notes, style: 'mdpi' };
+  }
+
+  const STYLES = { vancouver, ieee, mdpi };
+  const isNumeric = style => style === 'vancouver' || style === 'ieee' || style === 'mdpi';
   // Plain text, italic HTML and notes of one record in the chosen style (APA is produced by the reference engine / writer-cite).
   function format(item, style, helpers, options) {
     const build = STYLES[style];
@@ -223,11 +271,12 @@
     const runs = [];
     for (const n of sorted) { const last = runs.at(-1); if (last && n === last[1] + 1) last[1] = n; else runs.push([n, n]); }
     if (style === 'ieee') return runs.map(([a, b]) => b - a >= 2 ? `[${a}]–[${b}]` : b > a ? `[${a}], [${b}]` : `[${a}${where}]`).join(', ');
-    return `[${runs.map(([a, b]) => b - a >= 2 ? `${a}-${b}` : b > a ? `${a},${b}` : `${a}`).join(',')}${where}]`;
+    const rangeDash = style === 'mdpi' ? '–' : '-';
+    return `[${runs.map(([a, b]) => b - a >= 2 ? `${a}${rangeDash}${b}` : b > a ? `${a},${b}` : `${a}`).join(',')}${where}]`;
   }
 
-  const api = { format, vancouver, ieee, person, initialsOf, vancouverPages, journalAbbreviation, isNumeric, listLabel, citationLabel, citationGroup, ieeeTitle,
-    STYLES: ['apa', 'vancouver', 'ieee'], VANCOUVER_AUTHOR_LIMIT, IEEE_AUTHOR_LIMIT };
+  const api = { format, vancouver, ieee, mdpi, person, initialsOf, vancouverPages, journalAbbreviation, isNumeric, listLabel, citationLabel, citationGroup, ieeeTitle,
+    STYLES: ['apa', 'vancouver', 'ieee', 'mdpi'], VANCOUVER_AUTHOR_LIMIT, IEEE_AUTHOR_LIMIT };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.CitationStyles = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
