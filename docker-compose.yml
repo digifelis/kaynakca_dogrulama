@@ -5,6 +5,8 @@
 # Keys added in the admin panel are kept by the LLM service in the llm-data volume (run one LLM service: replicas stay 1).
 # Each container mounts only the public keys and its own private key (as a secret).
 # On another server, run any service alone and point QUEUE_URL at the queue's address.
+# Do NOT use this file there (QUEUE_URL below is the internal http://queue:4180): use the `docker run` commands in KURULUM.md (section 5.1).
+# For remote workers set QUEUE_BIND=<this server's DMZ IP> in .env, otherwise the queue only listens on 127.0.0.1.
 name: kaynakca-masasi
 
 x-service: &service

@@ -274,6 +274,71 @@ birden çok container çalıştırarak ölçeklenir (her worker aynı anda 1 iş
 7. **Yeni sunucu eklemek:** Yeni makinede Bölüm 2.1, 2.2, ardından bu bölümün 1–5. adımlarını uygulayın.
    Web ve kuyrukta değişiklik gerekmez.
 
+### 5.1 DMZ / kısıtlı ağdaki verify sunucusu (uygulamada karşılaşılan noktalar)
+
+**Compose kullanmayın.** `docker compose up` kuyruk, llm ve web'i de başlatır; `verify` servisinde
+`QUEUE_URL` değeri `http://queue:4180` olarak sabittir ve `mansur_laravel_net` ağı yoksa hata verir.
+Uzak sunucuda `kuyruğa ulaşılamadı (fetch failed)` logu görüyorsanız sebep budur. Bu sunucuda
+`docker compose down` yapın ve verify'ı yukarıdaki `docker run` komutuyla, `QUEUE_URL=http://<KUYRUK_IP>:4180`
+vererek başlatın. İmaj adı `kaynakca-masasi/verify` olmalıdır (`docker images | grep verify`).
+
+**Kuyruk sunucusunda (ana sunucu) 4180'i DMZ'ye açın.** Varsayılan `QUEUE_BIND=127.0.0.1` olduğu için
+uzaktaki worker `Connection refused` alır (0–2 ms'de döner; ağ değil, dinleme adresi sorunudur):
+```bash
+ss -ltnp | grep 4180                        # 127.0.0.1:4180 görüyorsanız dışarıya kapalıdır
+echo 'QUEUE_BIND=10.1.2.116' >> .env        # kuyruk sunucusunun DMZ IP'si (0.0.0.0'dan daha güvenli)
+docker compose up -d queue
+curl http://10.1.2.116:4180/health          # artık 127.0.0.1 değil, bu IP ile test edin
+```
+Aynı sunucudaki web/verify/llm Docker iç ağından bağlandığı için bu değişiklikten etkilenmez.
+Docker, `ufw`'yi atlayıp kendi iptables kurallarını yazar; erişimi yalnızca worker IP'sine kısıtlamak için:
+```bash
+iptables -I DOCKER-USER -s <WORKER_IP> -p tcp --dport 4180 -j ACCEPT
+```
+(Kalıcı olması için `iptables-persistent` veya kurumun güvenlik duvarı yönetimi kullanılır.) 4180 düz HTTP'dir;
+güvenilmeyen bir hat üzerinden gidiyorsa TLS'li reverse proxy (Bölüm 4, adım 5) kullanın.
+
+**Anahtarlar.** Hedefte yalnızca `keys/public/*.pem` (3 dosya) ve `keys/private/verify.private.pem` bulunmalıdır;
+`web` ve `llm` private anahtarlarını, `services/llm/.env`'i ve `data/` dizinini göndermeyin. `scp` hedef dizini
+oluşturmaz; önce `ssh <sunucu> "mkdir -p ~/kaynakca_dogrula/keys/public ~/kaynakca_dogrula/keys/private"`.
+Temiz aktarım:
+```bash
+tar czf /tmp/kd.tgz --exclude=node_modules --exclude=.git --exclude=graphify-out --exclude=data \
+  --exclude='*.pdf' --exclude=keys/private --exclude=services/llm/.env .
+```
+
+**Giden bağlantılar (inbound port gerekmez).** Verify sunucusunda dışarıdan gelen port açmayın (yönetim için SSH hariç).
+Giden: kuyruğa TCP 4180 (veya TLS proxy ile 443), DNS 53 ve aşağıdaki alan adlarına TCP 443.
+Çıkış denetimi alan adı bazlıysa izin listesine ekleyin:
+
+| Amaç | Alan adları |
+|---|---|
+| Ana kaynaklar | `api.crossref.org`, `api.openalex.org`, `doi.org`, `api.datacite.org` |
+| Biyomedikal | `eutils.ncbi.nlm.nih.gov`, `pubmed.ncbi.nlm.nih.gov`, `www.ebi.ac.uk`, `europepmc.org` |
+| Diğer akademik | `api.semanticscholar.org`, `export.arxiv.org`, `arxiv.org`, `api.unpaywall.org`, `eric.ed.gov`, `api.ies.ed.gov`, `portal.issn.org` |
+| Kitap | `openlibrary.org`, `www.googleapis.com`, `books.google.com`, `www.toplukatalog.gov.tr` |
+| Türkiye | `search.trdizin.gov.tr`, `atif.sobiad.com`, `makale.isam.org.tr` |
+
+Tam içerik denetiminde PDF'ler yayıncı sitelerinden indirilir; bu siteler önceden bilinemediği için kısıtlı çıkışta
+o özellik eksik kalabilir. `api.groq.com`, `openrouter.ai`, `generativelanguage.googleapis.com` yalnızca LLM servisi içindir.
+
+**İnternetsiz sunucuda imaj.** `docker build` npm/pip/apt/Docker Hub erişimi ister. Kısıtlıysa imajı başka yerde derleyip aktarın:
+```bash
+docker save kaynakca-masasi/verify | gzip > verify.tar.gz     # derleyen makinede
+docker load < verify.tar.gz                                    # hedefte
+```
+
+**Doğrulama kontrol listesi (hedef sunucuda):**
+```bash
+docker logs --tail 50 verify-1                                  # "kuyruğu dinliyor" görünmeli, "ulaşılamadı" olmamalı
+curl http://<KUYRUK_IP>:4180/health                             # {"ok":true,...}
+docker exec verify-1 node -e "fetch('https://api.crossref.org/works?rows=0').then(r=>console.log(r.status)).catch(e=>console.log('HATA',e.cause?.code||e.message))"
+```
+`ENOTFOUND` DNS, `ETIMEDOUT`/`ECONNREFUSED` çıkış engeli demektir. Kuyruk sunucusunda `docker compose logs queue --tail 30`
+yeni worker bağlantısını göstermelidir; web yönetim sayfasında `doğrulama servisi` sayısı artmalıdır.
+Yük dağılımını görmek için ana sunucuda `docker compose stop verify` yapıp web'den birkaç kaynakça doğrulatın,
+sonra `docker compose start verify` ile geri açın.
+
 ---
 
 ## 6. Güncelleme ve bakım
@@ -302,6 +367,9 @@ Aynı yöntem `web` ve `service` için de geçerlidir (ilgili `--target` ve komu
 | `QUEUE_URL tanımlı değil.` | `-e QUEUE_URL=...` verilmemiş. |
 | Web `(yerel mod)` diyor | Web'e `QUEUE_URL` verilmemiş; kuyruğa bağlı değil. |
 | Worker kuyruğa bağlanamıyor | DNS, TLS, güvenlik duvarı; sunucudan `curl https://kuyruk.ornek.com/health` deneyin. |
+| `Kuyruğa ulaşılamadı (fetch failed)`, log'da `http://queue:4180` | Worker compose ile başlatılmış; `QUEUE_URL` iç ağ adında kalmış. Compose'u kapatıp Bölüm 5.1'deki `docker run` ile gerçek kuyruk adresini verin. |
+| `curl ...:4180` → `Connection refused` (anında) | Kuyruk `QUEUE_BIND=127.0.0.1`'de dinliyor. Kuyruk sunucusunda `QUEUE_BIND=<DMZ_IP>` yapıp `docker compose up -d queue` (Bölüm 5.1). |
+| `scp: ...: No such file or directory` | Hedef dizin yok; önce `ssh ... "mkdir -p ..."` (Bölüm 5.1). |
 | `401`/imza hatası | Sunucudaki public/private anahtarlar farklı üretimden; aynı anahtar setini kullanın (2.4). |
 | Private anahtar okunamıyor | `sudo chown 1000:1000 keys/private/*.pem` ve `chmod 400`. |
 | Port zaten kullanımda | Eski container/süreç aynı portu tutuyor: `docker ps`, `docker rm -f <ad>`. |
