@@ -213,3 +213,13 @@ test('a group citation links every number to its own source (no false orphan sou
   assert.deepEqual(orphans, ['r1'], 'only source 2 is really uncited');
   assert.deepEqual(s.citations.map(c => c.reference), ['r0', 'r2', 'r3']);
 });
+
+test('IEEE: "and" inside a bracket list, corporate authors and books are not reported', () => {
+  const Numeric = require('../word-numeric.cjs');
+  assert.deepEqual(Numeric.citationsIn({ id: 'p', text: 'earlier DEM studies [3,14,16,17, 18,23,40,46,47,48, and 49].' }).map(c => c.number), [3, 14, 16, 17, 18, 23, 40, 46, 47, 48, 49]);
+  assert.deepEqual(Numeric.citationsIn({ id: 'p', text: 'as shown in [1 and 2]' }).map(c => c.number), [1, 2]);
+  assert.deepEqual(Numeric.entryProblems('ASTM International, ASTM D3080: Standard Test Method, West Conshohocken, PA, USA: ASTM International, 2011.', 'ieee'), []);
+  assert.deepEqual(Numeric.entryProblems('Altair Engineering, Inc., EDEM (Software), Version 2022.1, Altair Engineering, Inc., 2022.', 'ieee'), []);
+  assert.deepEqual(Numeric.entryProblems('K. H. Head, Manual of Soil Laboratory Testing, vol. 2: Permeability. Caithness, U.K.: Whittles, 2011.', 'ieee'), []);
+  assert.equal(Numeric.entryProblems('Smith J, Lee K. A study, vol. 3, pp. 4–5, 2020.', 'ieee').length > 0, true);
+});

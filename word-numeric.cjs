@@ -1,4 +1,4 @@
-// Numbered citations ([1], [1,3], [1-3], [1]–[3], [3, p. 12]) for the Word/PDF checks: Vancouver, IEEE and MDPI documents.
+// Numbered citations ([1], [1,3], [1-3], [1]–[3], [1, 2, and 3], [3, p. 12]) for the Word/PDF checks: Vancouver, IEEE and MDPI documents.
 // The author–year checks live in word-analysis.cjs; this module reads the numbers, matches them to the numbered
 // reference list and reports what is wrong with the numbering and with the entries' style.
 const Registry = require('./style-registry.js');
@@ -20,11 +20,11 @@ function splitLabel(raw) {
 const labelNumber = r => r.number ?? splitLabel(r.raw || '').number;
 
 // One bracket group: "[1]", "[1,3]", "[1, 3-5]", "[3, p. 12]", or the IEEE range "[1]–[3]".
-const GROUP = /\[\s*(\d{1,3}(?:\s*[,;]\s*\d{1,3}|\s*[-–—]\s*\d{1,3})*)\s*(?:,\s*(?:ss?|pp?)\.\s*\d+(?:\s*[-–—]\s*\d+)?)?\s*\](?:\s*[-–—]\s*\[\s*(\d{1,3})\s*\])?/g;
+const GROUP = /\[\s*(\d{1,3}(?:\s*[,;]\s*(?:(?:and|ve|&)\s+)?\d{1,3}|\s+(?:and|ve|&)\s+\d{1,3}|\s*[-–—]\s*\d{1,3})*)\s*(?:,\s*(?:ss?|pp?)\.\s*\d+(?:\s*[-–—]\s*\d+)?)?\s*\](?:\s*[-–—]\s*\[\s*(\d{1,3})\s*\])?/g;
 const MAX_RANGE = 200;
 function expand(list, rangeEnd) {
   const numbers = [];
-  const parts = list.split(/[,;]/).map(part => part.trim()).filter(Boolean);
+  const parts = list.replace(/\s+(?:and|ve|&)\s+|(?<=[,;])\s*(?:and|ve|&)\s+/gi, ',').split(/[,;]/).map(part => part.trim()).filter(Boolean);
   for (const part of parts) {
     const range = part.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
     if (range) {
@@ -172,10 +172,13 @@ function entryProblems(body, style) {
   } else if (style === 'ieee') {
     const quoted = text.search(/[“"]/);
     const authors = quoted > 0 ? text.slice(0, quoted) : text.split(/\.\s+(?=\p{Lu})/u)[0];
-    if (!/^(?:\p{Lu}\.[\s-]*){1,4}\p{Lu}[\p{L}'’-]+/u.test(text)) problems.push('yazar adı "A. Soyad" (başharf önce) biçiminde olmalı');
-    if (quoted < 0 && /\b(?:vol|pp?)\./i.test(text)) problems.push('makale başlığı çift tırnak içinde olmalı');
+    // A corporate author ("ASTM International, ...", "Altair Engineering, Inc., ...") is written as is, without initials.
+    const organization = /^(?:\p{Lu}[\p{L}&'’-]+\s+){0,4}\p{Lu}[\p{L}&'’-]+(?:,?\s*(?:Inc|Ltd|LLC|Co|Corp)\.)?[,.]\s+(?!\p{Lu}\.)/u.test(text);
+    if (!organization && !/^(?:\p{Lu}\.[\s-]*){1,4}\p{Lu}[\p{L}'’-]+/u.test(text)) problems.push('yazar adı "A. Soyad" (başharf önce) biçiminde olmalı');
+    // A book ("vol. 2: Title.") has no quoted title; only entries that read like a journal or proceedings article need one.
+    if (quoted < 0 && /\b(?:no|pp?)\.|\bvol\.\s*\d+\s*[,;]/i.test(text)) problems.push('makale başlığı çift tırnak içinde olmalı');
     const names = authors.replace(/\bet al\.?/i, '').split(/,\s*|\s+and\s+/).filter(name => name.trim());
-    if (names.length > 6 && !/\bet al\.?/i.test(authors)) problems.push('altıdan fazla yazar var; ilk yazar ve "et al." yazılmalı');
+    if (!organization && names.length > 6 &&!/\bet al\.?/i.test(authors)) problems.push('altıdan fazla yazar var; ilk yazar ve "et al." yazılmalı');
   }
   return problems;
 }

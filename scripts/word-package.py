@@ -188,6 +188,14 @@ def open_paren(text):
     i = text.rfind('(')
     return i >= 0 and text.find(')', i) < 0 and len(text) - i < 240
 
+def layout_rows(text):
+    rows = []
+    for raw in text.split('\n'):
+        raw = raw.replace(' ', ' ').replace('\t', ' ').rstrip()
+        stripped = raw.lstrip()
+        rows.append((len(raw) - len(stripped), re.sub(r' {2,}', ' ', stripped)))
+    return rows
+
 def pdf_lines(reader):
     """Visual lines in reading order as (page, indent, text); layout mode keeps word spacing and indentation."""
     import unicodedata
@@ -196,11 +204,19 @@ def pdf_lines(reader):
         try: text = page.extract_text(extraction_mode='layout') or ''
         except Exception: text = page.extract_text() or ''
         text = unicodedata.normalize('NFKC', text).replace('\u00ad', '')
-        rows = []
-        for raw in text.split('\n'):
-            raw = raw.replace('\u00a0', ' ').replace('\t', ' ').rstrip()
-            stripped = raw.lstrip()
-            rows.append((len(raw) - len(stripped), re.sub(r' {2,}', ' ', stripped)))
+        rows = layout_rows(text)
+        # Layout mode places glyphs by x position; justified text made of fragmented runs can overlap
+        # and interleave letters ("Variousstudies ... osfoil"). When a row's letters are absent from
+        # the plain content-stream text of the page, rebuild the page from the plain lines instead.
+        try: plain = unicodedata.normalize('NFKC', page.extract_text() or '').replace('\u00ad', '')
+        except Exception: plain = ''
+        squeeze = lambda t: re.sub(r'\s+', '', t)
+        flat = squeeze(plain)
+        if flat and any(len(squeeze(t)) > 12 and squeeze(t) not in flat for _, t in rows):
+            keyed = {squeeze(t)[:12]: i for i, t in rows if len(squeeze(t)) >= 12}
+            common = [i for i, t in rows if len(t) > 25]
+            default = max(set(common), key=common.count) if common else 0
+            rows = [(keyed.get(squeeze(t)[:12], default) if t else 0, t) for _, t in layout_rows(plain)]
         while rows and not rows[-1][1]: rows.pop()
         while rows and not rows[0][1]: rows.pop(0)
         pages.append(rows)
