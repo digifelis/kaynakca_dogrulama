@@ -11,12 +11,13 @@ function createWordWorkspace(prefix,mode) {
   }
   const selectedChecks=()=>Object.fromEntries(['references','citations','llm'].map(key=>[key,$('check-'+key)?.checked!==false]));
   // Citation style of the document: detected from the numbering, or chosen here. Vancouver, IEEE and MDPI belong to plans with that area.
-  const STYLE_LABELS={apa:'APA 7',vancouver:'Vancouver',ieee:'IEEE',mdpi:'MDPI'};
+  const STYLE_LABELS=globalThis.StyleRegistry?Object.fromEntries(globalThis.StyleRegistry.STYLES.map(style=>[style.id,style.label])):{apa:'APA 7',vancouver:'Vancouver',ieee:'IEEE',mdpi:'MDPI'};
   $('style')?.addEventListener?.('change',()=>action('style',{style:$('style').value}));
   function renderStyle(){
     const select=$('style');if(!select||!select.options||!state)return;
+    if(globalThis.StyleRegistry&&select.ownerDocument&&!select._filled){globalThis.StyleRegistry.fillSelect(select,{extra:[['auto','Otomatik']],value:'auto'});select._filled=true;}
     const allowed=!window.Auth?.hasFeature||window.Auth.hasFeature('styles');
-    for(const option of select.options){if(option.value==='vancouver'||option.value==='ieee'||option.value==='mdpi'){option.disabled=!allowed;option.textContent=STYLE_LABELS[option.value]+' [1]'+(allowed?'':' (paketinizde yok)');}}
+    for(const option of select.options){if(option.value!=='auto'&&option.value!=='apa'){option.disabled=!allowed;option.textContent=STYLE_LABELS[option.value]+(allowed?'':' (paketinizde yok)');}}
     select.options[0].textContent=`Otomatik (algılanan: ${STYLE_LABELS[state.citationStyle]||'APA 7'})`;
     select.value=state.styleAuto===false?state.citationStyle:'auto';
     select.disabled=busy||(!!state.job?.running&&state.job.kind!=='references');

@@ -11,6 +11,7 @@
     "start": "node server.cjs"
   },
   "dependencies": {
+    "citeproc": "^2.4.63",
     "ldapts": "^9.2.0",
     "nodemailer": "^10.0.13"
   }

@@ -7,6 +7,7 @@ const dns = require('node:dns').promises;
 const net = require('node:net');
 const Engine = require('./reference-engine.js');
 const Web = require('./web-reference.js');
+const {afterReferences} = require('./word-analysis.cjs');
 function publicIp(ip) {
   // Match special-use subnet boundaries, not entire /16 blocks (192.0.66.x is public).
   if(net.isIP(ip)===4){const [a,b,c]=ip.split('.').map(Number);return !(a===0||a===10||a===127||a>=224||a===169&&b===254||a===172&&b>=16&&b<=31||a===192&&(b===168||b===0&&(c===0||c===2)||b===88&&c===99)||a===100&&b>=64&&b<=127||a===198&&(b===18||b===19||b===51&&c===100)||a===203&&b===0&&c===113);}
@@ -425,7 +426,7 @@ function publicationPassages(text){
     const lines=String(page.text||'').split(/\n/);const kept=[];
     for(const line of lines){
       if(BIBLIOGRAPHY_HEADING.test(line)){bibliography=true;continue;}
-      if(bibliography&&/^\s*(?:APPENDIX|APPENDICES|SUPPLEMENTARY MATERIAL)\b/i.test(line))bibliography=false;
+      if(bibliography&&(/^\s*(?:APPENDIX|APPENDICES|SUPPLEMENTARY MATERIAL)\b/i.test(line)||afterReferences(line)))bibliography=false;
       if(bibliography)continue;
       if(!abstractDone){
         if(!inAbstract&&ABSTRACT_START.test(line)){inAbstract=true;skipped=0;}

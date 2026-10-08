@@ -1,5 +1,6 @@
 const Engine = require('./reference-engine.js');
 const Numeric = require('./word-numeric.cjs');
+const Registry = require('./style-registry.js');
 const norm = Engine.normalizeTitle;
 const YEAR = '(?:(?:18|19|20)\\d{2}[a-z]?|t\\.\\s*y\\.(?:-\\d+)?|n\\.\\s*d\\.(?:-\\d+)?)';
 const yearPattern = new RegExp(YEAR, 'gi');
@@ -7,7 +8,7 @@ const years = text => Array.from(text.matchAll(new RegExp(YEAR, 'gi')));
 const yearKey = value => value.toLowerCase().replace(/\s/g, '').replace(/^t\.y\.(-\d+)?$/, 'n.d.$1');
 // An undated citation ("t.y.") also fits a numbered undated record ("t.y.-1").
 const yearFits = (cited, listed) => cited === listed || (cited === 'n.d.' && /^n\.d\.-\d+$/.test(listed));
-const cleanName = value => String(value).replace(/\s*\[[^\]]*\]/g, '').replace(/['’]s\b/gi, '').replace(/\bet\s+al\.?|\bvd\b\.?|\bve\s+ark\.?|\bve\s+diğerleri/gi, '').replace(/[,\.\s]+$/, '').trim();
+const cleanName = value => String(value).replace(/\s*\[[^\]]*\]/g, '').replace(/['’](?:s|(?:[yn]?[ae]|[yn]?[iıuü]|[nd][ae]n?|[nt][ae]n?|n?[iıuü]n|yl[ae]|l[ae]))(?=[\s,;.)]|$)/giu, '').replace(/\bet\s+al\.?|\bvd\b\.?|\bve\s+ark\.?|\bve\s+diğerleri/gi, '').replace(/[,\.\s]+$/, '').trim();
 const nameKey = value => norm(cleanName(value));
 const heading = p => /^(?:heading|ba[şs]?l[iı]?k|balk)\s*\d*/i.test(p.style||'') || /^(?:introduction|discussion|conclusion|conclusions|abstract|giriş|sonuç|tartışma)$/i.test(p.text.trim());
 // Sentence openers that start with a capital but are not part of an author name.
@@ -62,6 +63,19 @@ function initialsFirstAuthors(prefix) {
   }
   return names.length ? names : null;
 }
+// Authors written with full given names (Chicago, MLA, İSNAD): "Zhang, Kai, and Min Jae Lee. “Title…" / "Zhang, Kai - Lee, Min Jae. Title…".
+function fullNameAuthors(prefix) {
+  const head = prefix.split(/\.\s+(?=[“"‘]|\p{Lu}\p{L}{2,})/u)[0].replace(/[.\s]+$/, '');
+  const pieces = head.split(/\s+[-–—]\s+|\s*;\s*|,?\s+(?:and|ve|&)\s+/i).map(piece => piece.trim()).filter(Boolean);
+  const names = [];
+  for (const [i, piece] of pieces.entries()) {
+    const inverted = piece.match(/^(\p{Lu}[\p{L}'’ -]*?),\s*\p{Lu}[\p{L}.'’ -]*$/u);
+    if (inverted) names.push(inverted[1].trim());
+    else if (i > 0 && /^\p{Lu}[\p{L}.'’ -]*$/u.test(piece)) names.push(piece.split(/\s+/).at(-1));
+    else return null;
+  }
+  return names.length && names.length <= 6 && head.length < 160 ? names : null;
+}
 function referenceIdentity(raw) {
   // A typed list number ("1. ", "[1] ") belongs to the numbering, not to the author or the title.
   raw = Numeric.splitLabel(raw).body;
@@ -73,16 +87,30 @@ function referenceIdentity(raw) {
   // Initials may be spaced ("D. J."), glued ("SY.") or without periods ("DJ"); a
   // list connector ("and", "ve", "&") belongs to the separator, not the surname.
   const authors = initialsFirstAuthors(prefix) || Array.from(prefix.matchAll(/(?:^|[,;&]\s*|\b(?:and|ve)\s+)([\p{L}][\p{L}'’\s-]*?),\s*[\p{Lu}](?:\.|[\p{Lu}]+\.?|(?=\s*[,;&(]|$))/gu)).map(m => m[1].trim().replace(/^(?:and|ve|&)\s+/i, ''));
-  if (!authors.length) authors.push(prefix.replace(/[,.(\s]+$/, ''));
+  if (!authors.length) authors.push(...(fullNameAuthors(prefix) || [prefix.replace(/[,.(\s]+$/, '')]));
   return { authors, author: authors[0], year: y ? yearKey(y[0]) : '', title: Engine.parseReference(raw).title };
 }
+// Sections journals print after the reference list ("Extended Summary", "Genişletilmiş Özet", funding, author contributions…).
+// What follows such a heading is not a reference. A bare heading line only; "Extended Summary: …" may carry its text inline.
+const AFTER_REFERENCES = new RegExp(String.raw`^(?:(?:\d+|[IVX]+)[.)]?\s*)?(?:`
+  + String.raw`(?:extended|expanded|genişletilmiş|geniş)\s+(?:summary|abstract|özet)(?:\s*[:.\-—–]\s*\S.*)?`
+  + String.raw`|(?:summary|abstract|özet|öz|résumé)\s*[:.]?`
+  + String.raw`|(?:supplementary|supporting)\s+(?:materials?|information|data)|ek\s+(?:materyal|bilgi)(?:ler)?`
+  + String.raw`|author(?:s[’']?)?\s+contributions?|(?:yazar(?:lar)?(?:ın)?\s+)?katkı(?:\s+oranı|\s+beyanı|ları)?|credit\s+author\s+statement`
+  + String.raw`|funding(?:\s+statement)?|financial\s+support|(?:finansal\s+)?destek|fonlama|(?:grants?\s+and\s+)?acknowledg(?:e)?ments?|teşekkür(?:ler)?|(?:ethics?|etik)(?:\s+(?:statement|approval|beyanı|kurulu?\s+onayı))?`
+  + String.raw`|institutional\s+review\s+board\s+statement|informed\s+consent\s+statement|data\s+availability(?:\s+statement)?|veri\s+(?:erişilebilirliği|kullanılabilirliği)`
+  + String.raw`|(?:conflicts?\s+of\s+interests?|competing\s+interests?|declaration\s+of\s+interests?|çıkar\s+çatışması(?:\s+beyanı)?)`
+  + String.raw`|abbreviations|kısaltmalar|about\s+the\s+authors?|author\s+biograph(?:y|ies)|yazar(?:lar)?\s+hakkında|biograph(?:y|ies)|özgeçmiş`
+  + String.raw`)\s*[:.]?$`, 'iu');
+// Short heading lines only, except an extended summary that runs on in the same line.
+const afterReferences = text => { const line = text.trim().split(/\r?\n/)[0]; return AFTER_REFERENCES.test(line) && (line.length < 120 || /^(?:(?:\d+|[IVX]+)[.)]?\s*)?(?:extended|expanded|genişletilmiş|geniş)\s/i.test(line)); };
 function extractReferences(paragraphs, range) {
   const main = paragraphs.filter(p => p.part === 'word/document.xml');
   const headings = main.filter(p => /^(kaynakça|kaynaklar|references|bibliography)\s*[:.]?$/i.test(p.text.trim()));
   const start = range?.start ?? (headings.length === 1 ? headings[0].index + 1 : -1);
   let end = range?.end ?? (main.length ? main.at(-1).index : -1);
   if (!range && start >= 0) {
-    const next = main.find(p => p.index >= start && (heading(p) || /^(ekler|appendix|appendices)\b/i.test(p.text.trim())));
+    const next = main.find(p => p.index >= start && (heading(p) || /^(ekler|appendix|appendices)\b/i.test(p.text.trim()) || afterReferences(p.text)));
     if (next) end = next.index - 1;
     // MDPI closes the list with "Disclaimer/Publisher’s Note: …" (several PDF lines); it is not a reference.
     const note = main.find(p => p.index >= start && p.index <= end && /^(?:disclaimer|publisher[’']?s note)\b/i.test(p.text.trim()));
@@ -115,7 +143,7 @@ function citationAuthors(value) {
 function narrativeAuthor(before,references) {
   const names=[...new Set(references.flatMap(r=>[...r.authors,...aliases(r,references)]))].sort((a,b)=>b.length-a.length);
   const proper="(?<![\\p{L}])(?:(?:de|van|von|der|den)\\s+)*[\\p{Lu}][\\p{L}'’–-]*(?:\\s+[\\p{Lu}][\\p{L}'’–-]*)*";
-  const ending="(?:\\s+(?:et\\s+al\\.?|vd\\.?|ve\\s+ark\\.?|ve\\s+diğerleri))?(?:['’]s)?";
+  const ending="(?:\\s+(?:et\\s+al\\.?|vd\\.?|ve\\s+ark\\.?|ve\\s+diğerleri))?(?:['’][\\p{L}]{1,4})?";
   const known=names.map(n=>before.match(new RegExp('(?<![\\p{L}])'+escaped(n)+ending+'$','iu'))).find(Boolean);
   const fallback=before.match(new RegExp(proper+ending+'$','u'));
   let value=(known||fallback)?.[0]||'';
@@ -134,7 +162,8 @@ function narrativeAuthor(before,references) {
   }
   return value.replace(/^The\s+/,'').replace(OPENER,'');
 }
-function citationsIn(p, references) {
+// opts.commaless: "(Zhang 2021)" without the comma (Chicago, ASA, APSA, Springer, CSE name–year).
+function citationsIn(p, references, opts = {}) {
   const citations = [];
   for (const par of p.text.matchAll(/\(([^()]*)\)/g)) {
     if (/kişisel iletişim|personal communication/i.test(par[1]) || /\b\d{4}\s*[-–—]\s*\d{4}\b/.test(par[1].replace(/:\s*\d+(?:\s*[-–]\s*\d+)?/g,''))) continue;
@@ -151,19 +180,50 @@ function citationsIn(p, references) {
         authorStart = before.length-authorText.length;
       }
       // Parenthetical prose/target years and units are not author–year citations.
-      const tail=segment.slice(ys[0].index).replace(/:\s*\d+(?:\s*[-–]\s*\d+)?/g,'').replace(new RegExp(YEAR,'gi'),'').replace(/[,\s]|(?:s\.|pp?\.)\s*\d+(?:[-–]\d+)?/gi,'');
-      if(tail || (!narrative && (!/,\s*$/.test(segment.slice(0,ys[0].index)) || !/^(?:(?:de|van|von)\s+)?\p{Lu}/u.test(authorText)))){segOffset+=segment.length+1;continue;}
+      // "1986/2004": original and translation/edition year of one work.
+      const pair=!!ys[1]&&/^\s*\/\s*$/.test(segment.slice(ys[0].index+ys[0][0].length,ys[1].index));
+      const tail=segment.slice(ys[0].index).replace(/:\s*\d+(?:\s*[-–]\s*\d+)?/g,'').replace(new RegExp(YEAR,'gi'),'').replace(/[,\s]|(?:s\.|pp?\.)\s*\d+(?:[-–]\d+)?/gi,'').replace(pair?'/':'','');
+      const separated = /,\s*$/.test(segment.slice(0,ys[0].index)) || (opts.commaless && /\S\s+$/.test(segment.slice(0,ys[0].index)));
+      if(tail || (!narrative && (!separated || !/^(?:(?:de|van|von)\s+)?\p{Lu}/u.test(authorText)))){segOffset+=segment.length+1;continue;}
       if (!authorText || /\d/.test(authorText) || authorText.length > 110) { segOffset += segment.length+1; continue; }
-      for (const y of ys) {
+      for (const y of pair ? [ys[0]] : ys) {
         const start = segOffset+y.index;
         citations.push({ id: 'c'+p.id+':'+start, paragraph: p.id, start, end: start+y[0].length,
           year: yearKey(y[0]), original: y[0], authorText, authorStart, authorEnd: authorStart+authorText.length,
-          authors: citationAuthors(authorText), narrative, protected: p.protected, text: `${authorText}, ${y[0]}` });
+          authors: citationAuthors(authorText), narrative, protected: p.protected, text: `${authorText}, ${y[0]}`, ...(pair ? { altYears: [yearKey(ys[1][0])] } : {}) });
       }
       segOffset += segment.length+1;
     }
   }
   return citations;
+}
+// MLA: "(Zhang and Lee 1199)" has an author and a page but no year; only a name that is a reference author counts as a citation.
+function authorPageCitations(p, references) {
+  const found = [], names = new Set(references.flatMap(r => aliases(r, references).map(nameKey)).filter(Boolean));
+  for (const par of p.text.matchAll(/\(([^()]*)\)/g)) {
+    let offset = par.index + 1;
+    for (const segment of par[1].split(';')) {
+      const authorText = segment.replace(/[,\s]*(?:(?:pp?|ss?)\.\s*)?\d+(?:\s*[-–]\s*\d+)?\s*$/, '').replace(/^\s+|[,\s]+$/g, '');
+      const authors = authorText ? citationAuthors(authorText) : [];
+      const at = offset + segment.indexOf(authorText);
+      if (authors.length && names.has(authors[0]) && !/\d/.test(authorText)) found.push({ id: 'c' + p.id + ':' + offset, paragraph: p.id, start: at, end: offset + segment.length, year: '', original: segment.trim(), authorText, authorStart: at, authorEnd: at + authorText.length, authors, narrative: false, protected: p.protected, text: segment.trim() });
+      offset += segment.length + 1;
+    }
+  }
+  return found;
+}
+// Footnote styles (Chicago notes, İSNAD footnotes, OSCOLA): a note cites the reference whose first author's surname and year (or opening title words) it contains.
+function noteCitationsIn(p, references) {
+  const text = p.text.trim();
+  if (!text || /^(?:ibid|idem|a\.?\s?g\.?\s?e|a\.?\s?g\.?\s?m|aynı|ayn[ıi]\s+yer)\b/i.test(text)) return [];
+  const key = norm(text);
+  const hits = references.filter(r => {
+    const name = nameKey(r.author), title = norm(r.title || '').split(' ').slice(0, 4).join(' ');
+    return name && key.includes(name) && ((/\d{4}/.test(r.year) && text.includes(r.year.slice(0, 4))) || (title.length >= 8 && key.includes(title)));
+  });
+  const base = { paragraph: p.id, start: 0, end: text.length, original: text, narrative: false, protected: p.protected, text };
+  if (hits.length) return hits.slice(0, 1).map(r => ({ ...base, id: 'c' + p.id + ':' + r.id, year: r.year, authorText: r.author, authors: [nameKey(r.author)], authorStart: 0, authorEnd: 0, reference: r.id }));
+  return /\(\s*(?:18|19|20)\d{2}[a-z]?\s*\)|[“"][^”"]{8,}[”"]/.test(text) ? [{ ...base, id: 'c' + p.id + ':n', year: '', authorText: text.split(/[,.]/)[0], authors: [], authorStart: 0, authorEnd: 0 }] : [];
 }
 // Turkish case/possessive suffix on a cited name: "Başkanlığına" for "Başkanlığı".
 const SUFFIX = /^(?:y?[ae]|n[ae]|[iu]|in|un|nin|nun|d[ae]n?|t[ae]n?|nd[ae]n?|yla|yle|la|le|si|su|ni|nu|yi|yu)$/;
@@ -176,20 +236,22 @@ function distance(a,b) {
   for(let i=1;i<=a.length;i++) for(let j=1;j<=b.length;j++) rows[i][j]=Math.min(rows[i-1][j]+1,rows[i][j-1]+1,rows[i-1][j-1]+(a[i-1]!==b[j-1]));
   return rows[a.length][b.length];
 }
-// options.style: 'apa' (author–year, the default), 'vancouver', 'ieee' or 'mdpi' (numbered citations).
+// options.style: any id of style-registry.js ('apa' author–year is the default).
 function analyze(paragraphs, references, range, options = {}) {
-  const numeric = Numeric.isNumeric(options.style);
+  const info = Registry.get(options.style) || {}, numeric = Numeric.isNumeric(options.style), noted = info.family === 'note';
   const citations = [], findings = [], matched = new Set(), history = new Map();
   for (const p of paragraphs) {
     if (p.part === 'word/document.xml' && p.index >= range.start && p.index <= range.end) continue;
+    if (noted && p.part === 'word/document.xml') continue;
     if (heading(p)) { history.set(p.group, []); continue; }
     const ss = sentences(p.text); const preceding = history.get(p.group) || [];
-    for (const c of (numeric ? Numeric.citationsIn(p) : citationsIn(p, references))) {
+    for (const c of (numeric ? Numeric.citationsIn(p, info.mark || 'brackets') : noted ? noteCitationsIn(p, references) : info.authorOnly ? authorPageCitations(p, references) : citationsIn(p, references, { commaless: info.commaless }))) {
       const sentence = Math.max(0, ss.findIndex(s=>c.start>=s.start && c.start<s.end));
       c.sentence = ss[sentence]?.text || p.text;
       c.context = [...preceding, ...ss.slice(0,sentence+1).map(s=>s.text)].slice(-4);
       c.location = `${p.part === 'word/document.xml' ? 'Ana metin' : p.part.includes('footnotes') ? 'Dipnot' : 'Sonnot'} · paragraf ${p.index+1}`;
       if (numeric) { if (Numeric.match(c, references)) matched.add(c.reference); }
+      else if (noted) { if (c.reference) matched.add(c.reference); else c.issue = 'Kaynakçası olmayan atıf'; }
       else {
       // An institution name may itself contain "ve"/"and" ("Afet ve Acil Durum Yönetimi
       // Başkanlığı"): when the whole text names a record, it is one author, not a list.
@@ -197,7 +259,7 @@ function analyze(paragraphs, references, range, options = {}) {
       if (c.authors.length>1 && references.some(r=>aliases(r,references).some(a=>nameKey(a)===whole||suffixed(whole,nameKey(a))))) c.authors=[whole];
       let byAuthor = references.filter(r => aliases(r,references).some(a=>nameKey(a)===c.authors[0]));
       if(!byAuthor.length && c.authors.length===1) byAuthor = references.filter(r => aliases(r,references).some(a=>suffixed(c.authors[0],nameKey(a))));
-      const exact = byAuthor.filter(r => yearFits(c.year, r.year));
+      const exact = byAuthor.filter(r => info.authorOnly ? true : [c.year, ...(c.altYears||[])].some(y => yearFits(y, r.year)));
       let ref;
       if(exact.length===1) ref=exact[0];
       else if(exact.length>1) {c.issue='Belirsiz eşleşme: aynı yazar ve yıl için birden fazla kayıt.';exact.forEach(r=>matched.add(r.id));c.candidates=exact.map(r=>r.id);}
@@ -245,6 +307,6 @@ function isTurkish(text) {
  const en=words.filter(w=>['the','a','and','of','in','to','for','is','this','with','study','according'].includes(w)).length;
  return tr>en || (tr===en && /[çğıöşü]/i.test(text));
 }
-// The style a document is written in: 'apa', 'vancouver', 'ieee' or 'mdpi' (from a numbered list or numbered citations).
+// The style a document is detected to be written in: 'apa', 'vancouver', 'ieee' or 'mdpi' (from a numbered list or numbered citations); other styles are chosen by hand.
 const detectStyle=(paragraphs,references,range)=>Numeric.detectStyle(paragraphs,references,range,p=>citationsIn(p,references).length);
-module.exports={detectStyle,isTurkish,extractReferences,referenceIdentity,citationsIn,analyze,sentences,publicationKeys};
+module.exports={detectStyle,isTurkish,extractReferences,referenceIdentity,citationsIn,analyze,sentences,publicationKeys,afterReferences};

@@ -10,6 +10,7 @@ const Cache=require('./lib/cache-store.cjs');
 const Metrics=require('./lib/metrics.cjs');
 const Store=require('./word-store.cjs');
 const Engine=require('./reference-engine.js');
+const Registry=require('./style-registry.js');
 const {python}=require('./lib/python.cjs');
 const Identity=require('./lib/identity.cjs');
 // Accounts: every document belongs to its uploader, and content checks are recorded as operations with their tokens.
@@ -56,7 +57,7 @@ function documentPatches(s){return [...s.applied.values()].filter(p=>!p.reportOn
 // The citation style of the document: chosen by the user, or read from a numbered list / numbered citations. Vancouver, IEEE and MDPI belong to plans with that area.
 function resolveStyle(s){
   if(!canUse(s.owner,'styles'))return 'apa';
-  if(s.styleAuto===false&&['apa','vancouver','ieee','mdpi'].includes(s.citationStyle))return s.citationStyle;
+  if(s.styleAuto===false&&Registry.has(s.citationStyle))return s.citationStyle;
   return Analysis.detectStyle(s.paragraphs,s.references,s.range||{start:-1,end:-1});
 }
 function rebuild(s){
@@ -363,8 +364,8 @@ async function handle(req,res,url,json){
     else if(action==='style'){
       // Reference verification keeps running: it does not depend on the citation style, and every result is restyled by rebuild().
       if(s.job.running&&s.job.kind!=='references')throw Error('Önce devam eden denetimi durdurun.');
-      const style=String(input.style||'');if(!['auto','apa','vancouver','ieee','mdpi'].includes(style))throw Error('Atıf stili otomatik, APA, Vancouver, IEEE veya MDPI olmalıdır.');
-      if(style==='vancouver'||style==='ieee'||style==='mdpi')allow(s.owner,'styles');
+      const style=String(input.style||'');if(style!=='auto'&&!Registry.has(style))throw Error('Atıf stili otomatik veya listedeki stillerden biri olmalıdır.');
+      if(style!=='auto'&&style!=='apa')allow(s.owner,'styles');
       s.styleAuto=style==='auto';if(style!=='auto')s.citationStyle=style;
       s.content={};s.manualMappings.clear();rebuild(s);
     }

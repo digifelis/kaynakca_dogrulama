@@ -1,9 +1,11 @@
 // Numbered citations ([1], [1,3], [1-3], [1]–[3], [3, p. 12]) for the Word/PDF checks: Vancouver, IEEE and MDPI documents.
 // The author–year checks live in word-analysis.cjs; this module reads the numbers, matches them to the numbered
 // reference list and reports what is wrong with the numbering and with the entries' style.
-const NUMERIC_STYLES = new Set(['vancouver', 'ieee', 'mdpi']);
-const isNumeric = style => NUMERIC_STYLES.has(style);
-const STYLE_NAMES = { apa: 'APA 7', vancouver: 'Vancouver', ieee: 'IEEE', mdpi: 'MDPI' };
+const Registry = require('./style-registry.js');
+// The checks that read the typed numbers and the style of a list entry cover Vancouver, IEEE and MDPI; every other numbered style (AMA, Nature, ...) is
+// checked for its citation numbers, and its list entries are rewritten from the verified record by the CSL engine.
+const isNumeric = style => Registry.isNumeric(style);
+const STYLE_NAMES = new Proxy({}, { get: (_, id) => Registry.label(id) });
 
 // A typed list number at the start of a reference: "[3] ", "3. ", "3) ".
 // PDF text extraction may drop the space after the number: "24.Xiong, D.J." still carries the number 24.
@@ -40,15 +42,32 @@ function expand(list, rangeEnd) {
   return numbers.length && numbers.every(n => n >= 1) ? numbers : null;
 }
 
-// The numbered citations of one paragraph, one entry per cited number (a group "[1-3]" gives three).
-function citationsIn(p) {
+// Round brackets (Science: "(1)", "(1, 2)", "(1–3)") and raised numbers (Nature, AMA, ACS, Lancet, ...): Word superscript runs, or Unicode superscript digits.
+const PARENS = /\(\s*(\d{1,3}(?:\s*[,;]\s*\d{1,3}|\s*[-–—]\s*\d{1,3})*)\s*\)/g;
+const RAISED = '⁰¹²³⁴⁵⁶⁷⁸⁹', RAISED_RUN = /[⁰¹²³⁴⁵⁶⁷⁸⁹](?:[⁰¹²³⁴⁵⁶⁷⁸⁹]|[,–⁻-](?=[⁰¹²³⁴⁵⁶⁷⁸⁹]))*/g;
+const unraise = text => Array.from(text).map(char => RAISED.includes(char) ? String(RAISED.indexOf(char)) : char === '⁻' ? '-' : char).join('');
+function raisedGroups(p) {
+  const groups = [];
+  for (const match of p.text.matchAll(RAISED_RUN)) groups.push({ index: match.index, text: match[0], list: unraise(match[0]) });
+  for (const [a, b] of p.sup || []) {
+    const text = p.text.slice(a, b);
+    if (/^\s*\d{1,3}(?:\s*[,;–—-]\s*\d{1,3})*\s*$/.test(text)) groups.push({ index: a, text, list: text.trim() });
+  }
+  return groups;
+}
+// The numbered citations of one paragraph, one entry per cited number (a group "[1-3]" gives three). mark: 'brackets' (default), 'parens' or 'superscript'.
+function citationsIn(p, mark = 'brackets') {
   const found = [];
-  for (const match of p.text.matchAll(GROUP)) {
-    const numbers = expand(match[1], match[2]);
+  const matches = [...p.text.matchAll(GROUP)].map(match => ({ index: match.index, text: match[0], list: match[1], rangeEnd: match[2] }));
+  if (mark === 'parens') matches.push(...[...p.text.matchAll(PARENS)].map(match => ({ index: match.index, text: match[0], list: match[1] })));
+  if (mark === 'superscript') matches.push(...raisedGroups(p).map(group => ({ ...group, raised: true })));
+  matches.sort((a, b) => a.index - b.index);
+  for (const match of matches) {
+    const numbers = expand(match.list, match.rangeEnd);
     if (!numbers) continue;
-    const start = match.index, end = start + match[0].length;
-    numbers.forEach((number, i) => found.push({ id: `c${p.id}:${start}:${number}`, paragraph: p.id, start, end, original: match[0], number, group: numbers, groupFirst: i === 0,
-      year: '', authors: [], authorText: match[0], authorStart: start, authorEnd: end, narrative: false, protected: p.protected, text: match[0] }));
+    const start = match.index, end = start + match.text.length;
+    numbers.forEach((number, i) => found.push({ id: `c${p.id}:${start}:${number}`, paragraph: p.id, start, end, original: match.text, number, group: numbers, groupFirst: i === 0,
+      year: '', authors: [], authorText: match.text, authorStart: start, authorEnd: end, narrative: false, protected: p.protected, text: match.text }));
   }
   return found;
 }
@@ -112,7 +131,7 @@ function numberingFindings(citations, references, style) {
     const top = Math.max(...counts.keys());
     for (let n = 1; n <= top; n++) if (!counts.has(n)) findings.push({ id: `refnum-gap-${n}`, type: 'Kaynakça numaralandırması bozuk', original: `Kaynakçada ${n} numaralı kayıt yok` });
   }
-  if (style === 'vancouver' || style === 'mdpi') {
+  if ((style === 'vancouver' || style === 'mdpi') && !citations.some(c => c.original && /^[(⁰¹²³⁴⁵⁶⁷⁸⁹]/.test(c.original))) {
     const rangeDash = style === 'mdpi' ? '–' : '-';
     for (const c of citations) {
       if (!c.groupFirst || c.issue || c.group.length < 3 || !/,/.test(c.original) || /[-–—]/.test(c.original)) continue;

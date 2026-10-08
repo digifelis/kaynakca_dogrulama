@@ -59,11 +59,23 @@ def mapping(z):
                     group = part + ':' + str(indexes[ancestor])
                 ancestor = parents.get(ancestor)
             text = ''.join(n.text or '' if n.tag == W+'t' else '\t' if n.tag == W+'tab' else '\n' if n.tag in {W+'br', W+'cr'} else '' for n in nodes)
+            # Superscript runs (numbered citations such as Nature or AMA write the number raised): [start, end) in UTF-16 units, like the patch offsets.
+            sup, at = [], 0
+            for n in nodes:
+                piece = (n.text or '') if n.tag == W+'t' else '\t' if n.tag == W+'tab' else '\n' if n.tag in {W+'br', W+'cr'} else ''
+                if not piece: continue
+                width = len(piece.encode('utf-16-le')) // 2
+                run = parents.get(n)
+                align = run.find('./'+W+'rPr/'+W+'vertAlign') if run is not None and run.tag == W+'r' else None
+                if align is not None and align.get(W+'val') == 'superscript' and n.tag == W+'t':
+                    if sup and sup[-1][1] == at: sup[-1][1] = at + width
+                    else: sup.append([at, at + width])
+                at += width
             total_text += len(text)
             if len(out) >= 25000 or total_text > 2000000: raise ValueError('Belge metin/paragraf sınırını aşıyor.')
             style = p.find('./'+W+'pPr/'+W+'pStyle')
             paragraph_locked = any(n.tag in {W+'bookmarkStart', W+'bookmarkEnd', W+'commentRangeStart', W+'commentRangeEnd', W+'footnoteReference', W+'endnoteReference', W+'hyperlink'} for n in nodes)
-            out.append({'id': part+':'+str(index), 'part': part, 'index': index, 'text': text, 'protected': bool(protected), 'paragraphLocked': paragraph_locked, 'group': group,
+            out.append({'id': part+':'+str(index), 'part': part, 'index': index, 'text': text, 'protected': bool(protected), 'paragraphLocked': paragraph_locked, 'group': group, 'sup': sup,
                         'style': style.get(W+'val', '') if style is not None else ''})
     return out, trees
 
@@ -306,6 +318,7 @@ def build_docx(blocks):
     if len(blocks) > 5000: raise ValueError('Makale blok sınırını aşıyor.')
     styles = {'h1': 'Heading1', 'h2': 'Heading2', 'h3': 'Heading3'}
     body = []
+    footnotes = []
     for b in blocks:
         kind = b.get('type', 'p')
         ppr = ''
@@ -317,6 +330,12 @@ def build_docx(blocks):
         runs = ''
         if prefix: runs += '<w:r><w:t xml:space="preserve">%s</w:t></w:r>' % prefix
         for r in b.get('runs', []):
+            note = r.get('footnote')
+            if note:
+                if len(footnotes) >= 2000: raise ValueError('Makale dipnot sınırını aşıyor.')
+                footnotes.append(note)
+                runs += '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="%d"/></w:r>' % len(footnotes)
+                continue
             text = str(r.get('text', ''))
             if not text: continue
             rpr = ('<w:b/>' if r.get('bold') else '') + ('<w:i/>' if r.get('italic') else '')
@@ -330,20 +349,43 @@ def build_docx(blocks):
     styles_xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles %s>'
         '<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/></w:rPr></w:rPrDefault>'
         '<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>'
-        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>%s%s%s</w:styles>') % (
-        ns, style('Heading1', 'heading 1', 32, True), style('Heading2', 'heading 2', 28, True), style('Heading3', 'heading 3', 26, True))
+        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>%s%s%s%s</w:styles>') % (
+        ns, style('Heading1', 'heading 1', 32, True), style('Heading2', 'heading 2', 28, True), style('Heading3', 'heading 3', 26, True),
+        '<w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style>'
+        '<w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>' if footnotes else '')
+    # Real footnotes (footnote-style citations: Chicago notes, İSNAD footnotes, OSCOLA): footnotes.xml, its style pair and the separator settings.
+    def footnote_run(r):
+        text = str(r.get('text', ''))
+        if not text: return ''
+        return '<w:r>%s<w:t xml:space="preserve">%s</w:t></w:r>' % ('<w:rPr><w:i/></w:rPr>' if r.get('italic') else '', esc(text))
+    footnotes_xml = ''
+    if footnotes:
+        sep = '<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>'
+        items = ['<w:footnote w:type="separator" w:id="-1"><w:p>%s<w:r><w:separator/></w:r></w:p></w:footnote>' % sep,
+                 '<w:footnote w:type="continuationSeparator" w:id="0"><w:p>%s<w:r><w:continuationSeparator/></w:r></w:p></w:footnote>' % sep]
+        for number, runs_list in enumerate(footnotes, 1):
+            content = ''.join(footnote_run(r) for r in runs_list if isinstance(r, dict))
+            items.append('<w:footnote w:id="%d"><w:p><w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>%s</w:p></w:footnote>' % (number, content))
+        footnotes_xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes %s>%s</w:footnotes>' % (ns, ''.join(items))
     content_types = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
-        '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>')
+        '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+        + ('<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>'
+           '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>' if footnotes else '') + '</Types>')
     rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
     doc_rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>')
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+        + ('<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>'
+           '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>' if footnotes else '') + '</Relationships>')
     out = io.BytesIO()
     with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
         z.writestr('[Content_Types].xml', content_types); z.writestr('_rels/.rels', rels)
         z.writestr('word/document.xml', document); z.writestr('word/styles.xml', styles_xml); z.writestr('word/_rels/document.xml.rels', doc_rels)
+        if footnotes:
+            z.writestr('word/footnotes.xml', footnotes_xml)
+            z.writestr('word/settings.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings %s><w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr></w:settings>' % ns)
     return out.getvalue()
 
 def main(request=None):

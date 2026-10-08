@@ -12,6 +12,7 @@ const Tei = require('./lib/tei-embed.cjs');
 const Answer = require('./lib/writer-answer.cjs');
 const Manuscript = require('./lib/writer-manuscript.cjs');
 const Cite = require('./writer-cite.js');
+const Registry = require('./style-registry.js');
 const Analysis = require('./word-analysis.cjs');
 const Cache = require('./lib/cache-store.cjs');
 
@@ -517,7 +518,7 @@ function createService(options = {}) {
             const input = await readBody(req, 16 * 1024);
             if (input.language !== undefined) { if (!['tr', 'en'].includes(input.language)) throw httpError(400, 'Makale dili Türkçe (tr) veya İngilizce (en) olmalıdır.'); db().setProjectLanguage(userId, projectId, input.language); }
             if (input.citationStyle !== undefined) {
-              if (!['apa', 'vancouver', 'ieee', 'mdpi'].includes(input.citationStyle)) throw httpError(400, 'Atıf stili APA, Vancouver, IEEE veya MDPI olmalıdır.');
+              if (!Registry.has(input.citationStyle)) throw httpError(400, 'Atıf stili listedeki stillerden biri olmalıdır.');
               if (input.citationStyle !== 'apa') need('styles');
               db().setProjectCitationStyle(userId, projectId, input.citationStyle);
             }

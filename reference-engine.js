@@ -36,6 +36,9 @@
   let additionalProviders = root.ReferenceProviders || null;
   const web = root.ReferenceWeb || (typeof require === 'function' ? require('./web-reference.js') : null);
   const styles = root.CitationStyles || (typeof require === 'function' ? require('./citation-styles.js') : null);
+  const registry = root.StyleRegistry || (typeof require === 'function' ? require('./style-registry.js') : null);
+  const csl = root.CslEngine || (typeof require === 'function' ? require('./csl-engine.js') : null);
+  const isNode = typeof module !== 'undefined' && !!module.exports;
   let options = {};
   function configure(settings = {}) {
     options = { ...options, ...settings };
@@ -451,14 +454,17 @@
   }
 
   // One record in the Vancouver or IEEE style (plain text, italic HTML, notes); APA is formatApa / crossrefApa.
-  function formatStyle(item, style, extra = {}) { return styles.format(item, style, { sentenceCase }, extra); }
+  function formatStyle(item, style, extra = {}) { return registry?.isCsl(style) ? csl.formatOne(style, item, { sentenceCase }, extra) : styles.format(item, style, { sentenceCase }, extra); }
+  // A CSL style is fetched once in the browser (Node reads it from disk); until then restyle leaves the result in APA.
+  const styleReady = style => !registry?.isCsl(style) || isNode || csl.isLoaded(style);
+  const prepareStyle = async style => { if (registry?.isCsl(style) && !isNode) await csl.loadAssets(style); };
   // The verification result with its suggestion written in `style`. The structured record stays in result.matched, so the style can be
   // changed at any time without verifying again; a record that was not found (or an APA request) is returned unchanged.
   function restyle(result, style, extra = {}) {
-    if (!style || style === 'apa' || !result?.matched || !['verified', 'review'].includes(result.status)) return result;
+    if (!style || style === 'apa' || !result?.matched || !['verified', 'review'].includes(result.status) || !styleReady(style)) return result;
     const formatted = formatStyle(result.registry ? registryItem(result.matched) : result.matched, style, extra);
     const verified = result.status === 'verified';
-    return { ...result, style, styleNotes: formatted.notes, corrected: verified ? formatted.text : result.raw, correctedHtml: verified ? formatted.html : null,
+    return { ...result, style, styleNotes: formatted.notes, styleNote: formatted.note || null, styleLabel: formatted.label || '', corrected: verified ? formatted.text : result.raw, correctedHtml: verified ? formatted.html : null,
       suggested: formatted.text, suggestedHtml: formatted.html, crossrefApa: null };
   }
 
@@ -585,7 +591,7 @@
       reason: status === 'verified' ? 'Başlık, yazar ve mevcut kimlik bilgileri tutarlı bir kayıtla eşleşti.' : `${reasons.join('; ')}. Öneri inceleme için gösterildi; özgün kaynak değiştirilmedi.` };
   }
 
-  // settings.style ('apa' | 'vancouver' | 'ieee') chooses how the corrected record is written.
+  // settings.style (any id of style-registry.js) chooses how the corrected record is written.
   async function verifyReference(reference, settings = {}) { return restyle(await verifyOne(reference, settings), settings.style); }
 
   const waitForRetry = retryAt => waitForQuota('Ek kaynaklar', Math.max(0, retryAt - Date.now()), 1, options.signal, options.onRetry);
@@ -593,7 +599,7 @@
     if (!result.pendingProviders?.length) return result.pendingRetryAt;
     return Math.min(...result.pendingProviders.map(item => quotaUntil.get(item.provider) || item.retryAt));
   }
-  const engine = { configure, normalizeTitle, splitReferences, getDoi, parseReference, titleScore, rankCandidate, sentenceCase, formatApa, formatApaHtml, formatStyle, restyle, verifyReference, requestJson, waitForRetry, getPendingRetryAt };
+  const engine = { configure, normalizeTitle, splitReferences, getDoi, parseReference, titleScore, rankCandidate, sentenceCase, formatApa, formatApaHtml, formatStyle, restyle, prepareStyle, styleReady, verifyReference, requestJson, waitForRetry, getPendingRetryAt };
   if (typeof module !== 'undefined' && module.exports) module.exports = engine;
   else root.ReferenceEngine = engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

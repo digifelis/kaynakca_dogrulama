@@ -18,7 +18,8 @@ const stopButton = document.querySelector('#stop-button');
 const retryButton = document.querySelector('#retry-button');
 const styleSelect = document.querySelector('#style-select');
 // APA, Vancouver or IEEE: the verified records are kept as structured data, so the style can change without verifying again.
-const STYLE_KEY = 'kaynakca-style', STYLE_NAMES = { apa: 'APA 7', vancouver: 'Vancouver', ieee: 'IEEE', mdpi: 'MDPI' };
+const STYLE_KEY = 'kaynakca-style', STYLE_NAMES = typeof StyleRegistry !== 'undefined' ? Object.fromEntries(StyleRegistry.STYLES.map(style => [style.id, style.label])) : { apa: 'APA 7', vancouver: 'Vancouver', ieee: 'IEEE', mdpi: 'MDPI' };
+if (typeof StyleRegistry !== 'undefined' && styleSelect?.ownerDocument) StyleRegistry.fillSelect(styleSelect, { value: 'apa' });
 let activeStyle = 'apa';
 try { const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STYLE_KEY) : null; if (saved in STYLE_NAMES) activeStyle = saved; } catch { /* storage unavailable: APA */ }
 let runController = null;
@@ -111,7 +112,12 @@ function outputReference(result) {
   return { text: shown.corrected, html: shown.correctedHtml };
 }
 // Numbered styles list the references in order: "1." (Vancouver, MDPI) or "[1]" (IEEE).
-const listPrefix = index => activeStyle === 'ieee' ? `[${index + 1}] ` : activeStyle === 'vancouver' || activeStyle === 'mdpi' ? `${index + 1}. ` : '';
+function listPrefix(index) {
+  if (activeStyle === 'ieee') return `[${index + 1}] `;
+  if (activeStyle === 'vancouver' || activeStyle === 'mdpi') return `${index + 1}. `;
+  if (typeof StyleRegistry !== 'undefined' && StyleRegistry.isCsl(activeStyle) && StyleRegistry.isNumeric(activeStyle) && typeof CslEngine !== 'undefined' && CslEngine.isLoaded(activeStyle)) { const label = CslEngine.listLabel(activeStyle, index + 1); return label ? label + ' ' : `${index + 1}. `; }
+  return '';
+}
 
 function applySuggestion(index) {
   if (!Number.isInteger(index)) return;
@@ -150,6 +156,7 @@ function renderResults(results) {
       </div>` : ''}
       ${result.type === 'web' && result.status === 'review' && result.suggested ? `<div class="web-editor"><label for="web-draft-${index}">Kaynakça önerisini düzenle</label><textarea id="web-draft-${index}" data-web-draft="${index}" rows="4" aria-describedby="web-draft-help-${index}">${escapeHtml(result.webDraft ?? result.suggested)}</textarea><p id="web-draft-help-${index}" class="reason">Değişiklikler taslakta tutulur. Son metni kullanmak için “Çıktıya uygula” düğmesine basın. Elle düzenlenen metin düz metin olarak aktarılır.</p></div>` : ''}
       <div class="result-meta"><span>${result.type === 'web' ? 'Alan bazında web kontrolü' : `Eşleşme: <strong>${result.score}/100</strong>`}</span><span>Kaynak: ${escapeHtml(result.provider)}</span>${safeUrl ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noreferrer">Kayıt bağlantısı ↗</a>` : ''}</div>
+      ${shown.styleNote ? `<p class="reason">Dipnot biçimi: ${shown.styleNote.html || escapeHtml(shown.styleNote.text)}</p>` : ''}
       ${shown.styleNotes?.length ? `<p class="reason">${escapeHtml(STYLE_NAMES[activeStyle])} notu: ${escapeHtml(shown.styleNotes.join('; '))}.</p>` : ''}
       ${result.changes.length ? `<div class="changes">${result.changes.map(change => `<span class="change-tag">${escapeHtml(change)}</span>`).join('')}</div>` : ''}
         <p class="reason">${escapeHtml(result.appliedSuggestion ? result.reason.replace('Öneri inceleme için gösterildi; özgün kaynak değiştirilmedi.', 'Öneri seçiminizle çıktıya uygulandı.') : result.reason)}</p>
@@ -163,9 +170,16 @@ function renderResults(results) {
   }).join('') || '<p class="empty-results">Bu kategoride kayıt bulunmuyor.</p>';
 }
 
+// Footnote styles (Chicago notes, İSNAD footnotes, OSCOLA): the first-citation note of each reference follows the bibliography.
+function footnotes(results) {
+  if (typeof StyleRegistry === 'undefined' || !StyleRegistry.isNote(activeStyle)) return [];
+  return results.map((result, index) => { const note = styled(result).styleNote; return note ? { number: index + 1, text: note.text, html: note.html } : null; }).filter(Boolean);
+}
 function renderOutput(results) {
-  outputText.textContent = results.map((result, index) => listPrefix(index) + outputReference(result).text).join('\n\n');
-  outputText.innerHTML = results.map((result, index) => { const output = outputReference(result); return `<p style="margin:0 0 1em">${escapeHtml(listPrefix(index))}${output.html || escapeHtml(output.text)}</p>`; }).join('');
+  const notes = footnotes(results);
+  outputText.textContent = results.map((result, index) => listPrefix(index) + outputReference(result).text).join('\n\n') + (notes.length ? '\n\nDipnot biçimi (ilk atıf)\n\n' + notes.map(note => `${note.number}. ${note.text}`).join('\n\n') : '');
+  outputText.innerHTML = results.map((result, index) => { const output = outputReference(result); return `<p style="margin:0 0 1em">${escapeHtml(listPrefix(index))}${output.html || escapeHtml(output.text)}</p>`; }).join('')
+    + (notes.length ? `<h4 style="margin:1.4em 0 .6em">Dipnot biçimi (ilk atıf)</h4>` + notes.map(note => `<p style="margin:0 0 1em">${note.number}. ${note.html || escapeHtml(note.text)}</p>`).join('') : '');
   outputSection.classList.remove('hidden');
 }
 
@@ -412,13 +426,23 @@ function syncStyleAccess() {
   if (!allowed && activeStyle !== 'apa') setStyle('apa');
   styleSelect.value = activeStyle;
 }
+let styleRequest = 0;
 function setStyle(style) {
-  activeStyle = style in STYLE_NAMES ? style : 'apa';
-  try { if (typeof localStorage !== 'undefined') localStorage.setItem(STYLE_KEY, activeStyle); } catch { /* the choice is simply not remembered */ }
-  if (displayedResults.length) { renderResults(displayedResults); renderOutput(displayedResults); }
+  const chosen = style in STYLE_NAMES ? style : 'apa', request = ++styleRequest;
+  const apply = () => {
+    activeStyle = chosen;
+    if (styleSelect) styleSelect.value = activeStyle;
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem(STYLE_KEY, activeStyle); } catch { /* the choice is simply not remembered */ }
+    if (displayedResults.length) { renderResults(displayedResults); renderOutput(displayedResults); }
+  };
+  if (ReferenceEngine.styleReady?.(chosen) !== false) return apply();
+  // A CSL style file is fetched the first time it is chosen; the list is redrawn when it is there.
+  return ReferenceEngine.prepareStyle(chosen).then(() => { if (request === styleRequest) apply(); },
+    () => { copyStatus.textContent = 'Stil dosyası yüklenemedi; APA gösteriliyor.'; if (request === styleRequest) setStyle('apa'); });
 }
 if (styleSelect) {
   styleSelect.value = activeStyle;
+  if (activeStyle !== 'apa') setStyle(activeStyle);
   styleSelect.addEventListener?.('change', () => setStyle(styleSelect.value));
 }
 if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('auth-change', syncStyleAccess);

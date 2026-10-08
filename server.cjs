@@ -125,7 +125,19 @@ function createServer({ inspectWeb = webInspect, app = null, writerStore = null 
         return json(res, result.status, result.body, result.retryAfter ? { 'Retry-After': result.retryAfter } : {});
       }
       const files = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/pages.js': ['pages.js', 'text/javascript'], '/ui.js': ['ui.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'],
-        '/web-reference.js': ['web-reference.js', 'text/javascript'], '/citation-styles.js': ['citation-styles.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/writer-app.js': ['writer-app.js', 'text/javascript'], '/auth-app.js': ['auth-app.js', 'text/javascript'], '/admin-app.js': ['admin-app.js', 'text/javascript'], '/admin-reports.js': ['admin-reports.js', 'text/javascript'], '/writer-cite.js': ['writer-cite.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
+        '/web-reference.js': ['web-reference.js', 'text/javascript'], '/citation-styles.js': ['citation-styles.js', 'text/javascript'], '/style-registry.js': ['style-registry.js', 'text/javascript'], '/csl-engine.js': ['csl-engine.js', 'text/javascript'], '/word-app.js': ['word-app.js', 'text/javascript'], '/writer-app.js': ['writer-app.js', 'text/javascript'], '/auth-app.js': ['auth-app.js', 'text/javascript'], '/admin-app.js': ['admin-app.js', 'text/javascript'], '/admin-reports.js': ['admin-reports.js', 'text/javascript'], '/writer-cite.js': ['writer-cite.js', 'text/javascript'], '/reference-engine.js': ['reference-engine.js', 'text/javascript'], '/providers.js': ['providers.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
+      // citeproc-js (browser build of the CommonJS package) and the CSL style / locale files, which only the styles in the registry may name.
+      if (url.pathname === '/vendor/citeproc.js') {
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+        return res.end('(function(){var module={exports:{}},exports=module.exports;' + fs.readFileSync(require.resolve('citeproc'), 'utf8') + '\n;globalThis.CSL=module.exports;})();');
+      }
+      const cslFile = url.pathname.match(/^\/csl\/(?:styles\/([a-z0-9-]+)\.csl|locales\/(locales-(?:en-US|tr-TR))\.xml)$/);
+      if (cslFile) {
+        const known = cslFile[1] ? require('./style-registry.js').isCsl(cslFile[1]) : true;
+        if (!known) return json(res, 404, { error: 'Dosya bulunamadı' });
+        res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+        return res.end(fs.readFileSync(path.join(__dirname, 'csl', cslFile[1] ? 'styles' : 'locales', cslFile[1] ? cslFile[1] + '.csl' : cslFile[2] + '.xml')));
+      }
       const file = files[url.pathname];
       if (!file) return json(res, 404, { error: 'Dosya bulunamadı' });
       res.writeHead(200, { 'Content-Type': `${file[1]}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });

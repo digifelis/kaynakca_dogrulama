@@ -1,6 +1,6 @@
 # Kaynakça Masası
 
-Kaynakçayı yapıştırıp açık akademik kayıtlarla karşılaştıran, güçlü eşleşmeleri APA 7, Vancouver veya IEEE biçiminde düzelten tek sayfalık ilk sürüm.
+Kaynakçayı yapıştırıp açık akademik kayıtlarla karşılaştıran, güçlü eşleşmeleri APA 7, Vancouver, IEEE, MDPI ve 24 CSL stilinde (İSNAD 2, MLA 9, Chicago 17/18, Harvard, AMA, ACS, ASA, APSA, CSE, OSCOLA, APA 6, Nature, Science, Cell, Lancet, Springer, Elsevier, BMJ, PLOS) düzelten tek sayfalık ilk sürüm.
 
 ## Çalıştırma
 
@@ -74,7 +74,7 @@ docker compose up --build
 Word incelemesinde **Atıf sorunları**, **Yetim atıflar**, **Yetim kaynakça**, **Atıflar ve içerik kanıtları** ve **Kaynakça kayıtları** ayrı listelerde gösterilir. Sayaçlara tıklayarak liste değiştirebilir, etkin listede arama yapabilirsiniz. Bulguların **İlgili paragrafı göster** çekmecesi metni kartın içinde açar. İçerik listesinde sonuç durumuna göre filtreler bulunur. Açık çekmeceler ve toplu düzeltme seçimleri liste değişikliklerinde korunur. İndirilen denetim raporu arama ve filtrelerden bağımsız olarak tüm kayıtları içerir.
 
 1. Kaynakçayı metin alanına yapıştırın veya örneklerden birini seçin.
-2. APA 7, Vancouver veya IEEE biçimini seçin (Vancouver ve IEEE listeleri numaralıdır).
+2. Atıf stilini seçin (numaralı stillerde liste atıf sırasındadır; dipnotlu stillerde kaynakçanın altında ilk atıf dipnotları da gösterilir).
 3. `Doğrula ve düzelt` düğmesine basın.
 4. Kayıt kartlarında eşleşme puanını, sağlayıcıyı ve yapılan değişiklikleri inceleyin.
 5. Düzeltilmiş kaynakçayı kopyalayın.
@@ -238,3 +238,12 @@ Her sağlayıcı için sınırsız sayıda API anahtarı tanımlanabilir; ücret
 - **Saklama:** `LLM_DATA_DIR` (yoksa `WRITER_DATA_DIR`, yoksa `data/writer`) içindeki `llm-keys.db`; şifre anahtarı `SETTINGS_SECRET` ya da aynı dizindeki `settings.secret`. Yedekte ikisi birlikte alınmalıdır.
 - **Kuyruk/Docker modu:** anahtarlar yalnızca **LLM servisinde** tutulur (`llm-data` birimi); web uygulaması yeni anahtarı LLM servisinin RSA genel anahtarıyla şifreleyip bir kuyruk işi olarak iletir. Panelin çalışması için LLM servisi açık olmalıdır ve tek kopya (`replicas: 1`) çalışmalıdır.
 - **Önemli:** Groq ve OpenRouter ücretsiz sınırları çoğunlukla **hesap/organizasyon başınadır**; aynı hesaptan alınan birden çok anahtar kotayı artırmaz. Gerçekten ayrı hesapların anahtarlarını kullanın.
+
+## Atıf stilleri
+
+Stil listesi tek yerde tutulur: `style-registry.js` (kimlik, ad, aile: yazar-tarih / numaralı / dipnotlu, motor).
+- APA 7, Vancouver, IEEE ve MDPI elle yazılmıştır (`citation-styles.js`, `reference-engine.js`).
+- Diğer 24 stil resmi CSL dosyalarıyla biçimlenir: `csl/styles/*.csl`, yerel ayarlar `csl/locales/`, motor `csl-engine.js` (citeproc-js, `npm` paketi `citeproc`). Tarayıcı citeproc'u `/vendor/citeproc.js` ve stil dosyalarını `/csl/...` adresinden ilk seçimde alır.
+- Yazım yardımcısı: atıflar stile göre yazar-yıl, numara ya da dipnot olur; dipnotlu stillerde Word çıktısı gerçek dipnot (`footnotes.xml`) içerir.
+- Word denetimi: yazar-yıl (virgüllü ve virgülsüz), MLA yazar-sayfa, numaralı (köşeli/yuvarlak parantez, üst simge) ve dipnotlu atıflar okunur. Otomatik algılama yalnız APA, Vancouver, IEEE ve MDPI içindir; diğer stiller elle seçilir.
+- Sınırlar: dipnotlu belgelerde kaynak eşleştirme yazar soyadı + yıl/başlık ile yapılır; "ibid." ve "a.g.e." dipnotları atlanır. Numaralı CSL stillerinde sayfa belirteci metinde gösterilmez.

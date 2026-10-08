@@ -275,7 +275,7 @@
     return `[${runs.map(([a, b]) => b - a >= 2 ? `${a}${rangeDash}${b}` : b > a ? `${a},${b}` : `${a}`).join(',')}${where}]`;
   }
 
-  const api = { format, vancouver, ieee, mdpi, person, initialsOf, vancouverPages, journalAbbreviation, isNumeric, listLabel, citationLabel, citationGroup, ieeeTitle,
+  const api = { format, vancouver, ieee, mdpi, person, typeOf, articleTitle, dash, edition, todayParts, initialsOf, vancouverPages, journalAbbreviation, isNumeric, listLabel, citationLabel, citationGroup, ieeeTitle,
     STYLES: ['apa', 'vancouver', 'ieee', 'mdpi'], VANCOUVER_AUTHOR_LIMIT, IEEE_AUTHOR_LIMIT };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.CitationStyles = api;

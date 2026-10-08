@@ -90,6 +90,7 @@
     $('editor').innerHTML = S.data.manuscript.html;
     $('saved').textContent = '';
     $('project').value = id;
+    try { await Cite.loadStyle(styleOf()); } catch { say('Atıf stili dosyası yüklenemedi; yazar–yıl gösteriliyor.', 'warn'); }
     renderAll(); schedulePoll();
   }
 
@@ -100,7 +101,8 @@
   function renderStyle() {
     if (!S.data) return;
     const allowed = !window.Auth?.hasFeature || window.Auth.hasFeature('styles'), select = $('citation-style');
-    for (const option of select.options) if (option.value !== 'apa') { option.disabled = !allowed; option.textContent = ({ ieee: 'IEEE', mdpi: 'MDPI' }[option.value] || 'Vancouver') + (allowed ? '' : ' (paketinizde yok)'); }
+    if (globalThis.StyleRegistry && select.ownerDocument && !select._filled) { globalThis.StyleRegistry.fillSelect(select, { value: 'apa' }); select._filled = true; }
+    for (const option of select.options) if (option.value !== 'apa') { option.disabled = !allowed; option.textContent = (globalThis.StyleRegistry?.label(option.value) || option.value) + (allowed ? '' : ' (paketinizde yok)'); }
     select.value = styleOf();
   }
   function renderAll() { renderLanguage(); renderStyle(); renderPicker(); renderMessages(); refreshCitations(); renderBibliography(); renderUsage(); }
@@ -316,16 +318,30 @@
   }
   function refreshCitations() {
     const byId = sourcesById(), ctx = citeContext();
+    let position = 0;
     for (const span of $('editor').querySelectorAll('span.cite')) {
-      const text = Cite.renderGroup(Cite.parseRefs(span.dataset.cite), byId, span.dataset.lang, ctx).text;
+      const text = Cite.renderGroup(Cite.parseRefs(span.dataset.cite), byId, span.dataset.lang, ctx, position++).text;
       if (text && span.textContent !== text) span.textContent = text;
     }
+    renderNotes();
+  }
+  // Footnote styles: the notes of the citations, in text order (the Word export writes them as real footnotes).
+  function renderNotes() {
+    const block = $('notes-block');
+    if (!block) return;
+    const on = Cite.isNote(styleOf());
+    block.hidden = !on;
+    if (!on) return;
+    const groups = [...$('editor').querySelectorAll('span.cite')].map(span => Cite.parseRefs(span.dataset.cite));
+    const notes = Cite.footnoteTexts(groups, sourcesById(), styleOf());
+    $('notes-count').textContent = notes.filter(note => note.text).length;
+    $('notes').innerHTML = notes.map(note => note.text ? `<li>${safeEmphasis(note.html)}</li>` : '').join('') || '<li class="wr-muted">Metne atıf eklendiğinde dipnotlar burada görünür.</li>';
   }
   // The reference list entries of the cited sources: alphabetical in APA 7; in citation order, numbered, in Vancouver and IEEE.
   function bibliographyEntries() {
     const byId = sourcesById(), style = styleOf(), numbered = Cite.isNumeric(style);
     const entries = editorDocIds().map(id => byId[id]).filter(Boolean).map((source, index) => {
-      const entry = Cite.referenceEntry(source, style), prefix = !numbered ? '' : style === 'ieee' ? `[${index + 1}] ` : `${index + 1}. `;
+      const entry = Cite.referenceEntry(source, style), prefix = Cite.listLabel(style, index + 1);
       return { source, entry: { text: prefix + entry.text, html: esc(prefix) + entry.html, notes: entry.notes || [] } };
     });
     return numbered ? entries : entries.sort((a, b) => a.entry.text.localeCompare(b.entry.text, 'tr'));
@@ -346,7 +362,7 @@
   const COMMANDS = { h1: ['formatBlock', 'h1'], h2: ['formatBlock', 'h2'], h3: ['formatBlock', 'h3'], p: ['formatBlock', 'p'], bold: ['bold'], italic: ['italic'], ul: ['insertUnorderedList'], ol: ['insertOrderedList'] };
 
   // ---- saving the manuscript
-  function changed() { S.dirty = true; $('saved').textContent = 'Kaydedilmedi…'; clearTimeout(S.saveTimer); S.saveTimer = setTimeout(save, 1200); if (Cite.isNumeric(styleOf())) refreshCitations(); renderBibliography(); }
+  function changed() { S.dirty = true; $('saved').textContent = 'Kaydedilmedi…'; clearTimeout(S.saveTimer); S.saveTimer = setTimeout(save, 1200); if (Cite.isNumeric(styleOf()) || Cite.isNote(styleOf())) refreshCitations(); renderBibliography(); }
   async function save() {
     clearTimeout(S.saveTimer);
     if (!S.dirty || S.conflict || !S.projectId) return;
@@ -411,11 +427,12 @@
   $('citation-style').addEventListener('change', async event => {
     const citationStyle = event.target.value;
     try {
+      await Cite.loadStyle(citationStyle);
       await api('PATCH', `/projects/${S.projectId}`, { citationStyle });
       S.data.project.citationStyle = citationStyle;
       refreshCitations();
       if ($('editor').querySelector('[data-bibliography]')) insertBibliography(); else { renderBibliography(); changed(); }
-      say(citationStyle === 'apa' ? 'Atıflar APA 7 yazar–yıl biçiminde.' : `Atıflar ${{ ieee: 'IEEE', mdpi: 'MDPI' }[citationStyle] || 'Vancouver'} biçiminde numaralandı; kaynakça atıf sırasına göre dizilir.`, 'ok');
+      say(citationStyle === 'apa' ? 'Atıflar APA 7 yazar–yıl biçiminde.' : `Atıflar ${globalThis.StyleRegistry?.label(citationStyle) || citationStyle} biçiminde${globalThis.StyleRegistry?.isNumeric(citationStyle) ? ' numaralandı; kaynakça atıf sırasına göre dizilir' : globalThis.StyleRegistry?.isNote(citationStyle) ? ' dipnotla gösterilir' : ' yazar–yıl olarak yazıldı'}.`, 'ok');
     } catch (error) { fail(error); renderStyle(); }
   });
   window.addEventListener('auth-change', renderStyle);
